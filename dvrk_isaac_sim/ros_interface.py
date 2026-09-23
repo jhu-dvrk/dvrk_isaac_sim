@@ -8,23 +8,37 @@ from typing import Iterable
 
 import numpy as np
 
-from .config import RobotConfig
-from .kinematics import CRTKECM, CRTKPSM, CRTKComponent, Pose
-
-
-from .cartesian_frames import (
-    _VIEW_TO_OPTICAL_ROTATION,
-    _compose_pose,
-    _inverse_pose,
-    _quaternion_matrix_xyzw,
-    _relative_pose,
-    _relative_twist,
-    _view_pose_from_optical,
+from dvrk_simulator_base.command_validation import (
+    jaw_position_from_message,
+    joint_positions_from_message,
+    pose_from_message as _pose_from_ros,
 )
-from .ros_messages import _pose_from_ros, _quaternion_xyzw
-from .command_validation import joint_positions_from_message, jaw_position_from_message
-from .ros_qos import transient_local_event_qos, transient_local_latched_qos
-from .operating_state import CRTKOperatingState
+from dvrk_simulator_base.command_mailbox import CommandEnvelope, CommandMailboxes
+from dvrk_simulator_base.cartesian_frames import (
+    _VIEW_TO_OPTICAL_ROTATION,
+    compose_pose as _compose_pose,
+    inverse_pose as _inverse_pose,
+    relative_pose as _relative_pose,
+    relative_twist as _relative_twist,
+    view_pose_from_optical as _view_pose_from_optical,
+)
+from dvrk_arm_description import RobotConfig
+from dvrk_simulator_base.operating_state import CRTKOperatingState
+from dvrk_simulator_base.ros_qos import (
+    transient_local_event_qos,
+    transient_local_latched_qos,
+)
+from dvrk_simulator_base.rotations import (
+    quaternion_matrix_xyzw as _quaternion_matrix_xyzw,
+    rotation_to_quaternion_xyzw as _quaternion_xyzw,
+)
+from dvrk_simulator_base.snapshots import ArmSnapshot, OperatingStateSnapshot
+from dvrk_simulator_base.types import JointState as SnapshotJointState
+from dvrk_simulator_base.types import Pose, Pose as SnapshotPose
+from dvrk_simulator_base.types import Twist as SnapshotTwist
+from .kinematics import CRTKECM, CRTKPSM, CRTKComponent
+
+
 
 
 class CRTKROSComponent:
@@ -62,15 +76,15 @@ class CRTKROSComponent:
         instrument = asset.get("instrument") if isinstance(asset, dict) else None
         self._instrument_name = str(instrument) if instrument not in (None, "") else None
         self._cartesian_reference_frame = self._frame_id
-        # Servo commands can arrive faster than the Isaac update loop. Keep
-        # only the newest command and solve IK from the simulation thread.
-        self._pending_servo_cp = None
-        self._pending_servo_cp_received_at = None
-        self._commands_received = 0
+        # ROS callbacks only validate and enqueue.  Isaac owns model mutation
+        # when its control loop drains these bounded mailboxes.
+        self.commands = CommandMailboxes()
         self._commands_applied = 0
-        self._commands_coalesced = 0
         self._commands_rejected = 0
         self._last_command_age_ms: float | None = None
+        self._snapshot_sequence = 0
+        self._latest_snapshot: ArmSnapshot | None = None
+        self._operating_state_event_pending = True
         self._last_published_busy = None
         self._motion_busy = False
         self._motion_start_stamp: tuple[int, int] | None = None
@@ -263,14 +277,14 @@ class CRTKROSComponent:
     def _twist_for_ros(self, pose: Pose, twist):
         if self._cartesian_reference is None:
             return twist.linear, twist.angular
-        linear, angular = _relative_twist(
+        relative = _relative_twist(
             pose, twist, self._cartesian_reference.measured_cp(),
             self._cartesian_reference.measured_cv(),
         )
         # _relative_twist is in ECM optical axes; publish dVRK view axes.
         return (
-            _VIEW_TO_OPTICAL_ROTATION.T @ linear,
-            _VIEW_TO_OPTICAL_ROTATION.T @ angular,
+            _VIEW_TO_OPTICAL_ROTATION.T @ relative.linear,
+            _VIEW_TO_OPTICAL_ROTATION.T @ relative.angular,
         )
 
     @property
@@ -280,43 +294,54 @@ class CRTKROSComponent:
 
     def command_metrics(self) -> tuple[int, int, int, int, float | None]:
         """Return cumulative receive/apply counters for latency diagnostics."""
+        counters = self.commands.counters
         return (
-            self._commands_received,
+            counters.received,
             self._commands_applied,
-            self._commands_coalesced,
-            self._commands_rejected,
+            counters.coalesced,
+            counters.rejected + self._commands_rejected,
             self._last_command_age_ms,
         )
 
-    def _command_received(self) -> float:
-        self._commands_received += 1
-        return time.monotonic()
-
-    def _command_applied(self, received_at: float) -> None:
+    def _command_applied(self, command: CommandEnvelope) -> None:
         self._commands_applied += 1
-        self._last_command_age_ms = 1000.0 * (time.monotonic() - received_at)
+        self._last_command_age_ms = (
+            time.monotonic_ns() - command.received_at_ns
+        ) * 1.0e-6
 
     def _command_rejected(self) -> None:
         self._commands_rejected += 1
 
+    def _submit(self, channel: str, payload, *, servo: bool) -> bool:
+        """Queue a command from ROS or the external rqt client.
+
+        This method is safe to call from a ROS executor thread.  It does not
+        inspect or mutate the Isaac-owned model.
+        """
+        if servo:
+            self.commands.submit_servo(channel, payload)
+            return True
+        if self.commands.submit_discrete(channel, payload) is not None:
+            return True
+        self._command_rejected()
+        self._publish_warning(f"rejected {channel}: command queue is full")
+        return False
+
     def command_jaw_position(self, position: float) -> bool:
-        """Apply a GUI/ROS-equivalent jaw target with instrument limits."""
-        if not self._has_jaw or not self._motion_allowed("jaw command"):
+        """Queue a jaw command from a GUI/ROS-equivalent caller."""
+        if not self._has_jaw:
             return False
-        value = float(position)
-        if not self._jaw_lower <= value <= self._jaw_upper:
+        try:
+            value = float(position)
+        except (TypeError, ValueError):
+            return False
+        if not np.isfinite(value) or not self._jaw_lower <= value <= self._jaw_upper:
             self._publish_warning(
                 f"rejected jaw position {value}: "
                 f"expected [{self._jaw_lower}, {self._jaw_upper}] radians"
             )
-            self.node.get_logger().warning(
-                f"{self.config.name} rejected jaw position {value}: "
-                f"expected [{self._jaw_lower}, {self._jaw_upper}] radians"
-            )
             return False
-        self._jaw_position = value
-        self._jaw_velocity = 0.0
-        return True
+        return self._submit("jaw/servo_jp", value, servo=True)
 
     @property
     def operating_state(self) -> str:
@@ -328,79 +353,51 @@ class CRTKROSComponent:
         return self._operating_state.is_homed
 
     def command_state(self, command: str) -> bool:
-        """Apply a state command through the same path as ROS state_command."""
-        success, error = self._operating_state.command(command)
-        if not success:
-            self._publish_warning(f"rejected GUI state command {command!r}: {error}")
-            self.node.get_logger().warning(
-                f"{self.config.name} rejected GUI state command {command!r}: {error}"
-            )
+        """Queue a state command through the same path as ROS state_command."""
+        return self._submit("state_command", str(command), servo=False)
+
+    def command_joint_position(self, position: Iterable[float]) -> bool:
+        """Queue a GUI joint target for the Isaac control loop."""
+        try:
+            values = np.asarray(list(position), dtype=float)
+            if values.shape != (len(self.config.joints),) or not np.all(np.isfinite(values)):
+                raise ValueError("joint position has the wrong size or contains non-finite values")
+        except (TypeError, ValueError) as error:
+            self._publish_warning(f"rejected GUI joint command: {error}")
             return False
+        return self._submit("move_jp", values, servo=False)
+
+    def command_cartesian_position(self, pose: Pose) -> bool:
+        """Queue a world-frame GUI Cartesian target for the Isaac control loop."""
+        return self._submit("move_cp_world", pose, servo=False)
+
+    def _apply_state_command(self, command: CommandEnvelope) -> None:
+        success, error = self._operating_state.command(command.payload)
+        if not success:
+            self._command_rejected()
+            self._publish_warning(f"rejected state_command {command.payload!r}: {error}")
+            self.node.get_logger().warning(
+                f"{self.config.name} rejected state_command {command.payload!r}: {error}"
+            )
+            return
         if self._operating_state.state in (CRTKOperatingState.DISABLED, CRTKOperatingState.FAULT):
             self.model.move_jp(self.model.measured_js().position)
         self._publish_operating_state(self._event_stamp())
         self._publish_info(f"state is now {self._operating_state.state}")
-        return True
-
-    def command_joint_position(self, position: Iterable[float]) -> bool:
-        """Apply a GUI joint target while preserving operating-state semantics."""
-        if not self._motion_allowed("GUI joint command"):
-            return False
-        try:
-            self.model.move_jp(position)
-        except ValueError as error:
-            self.node.get_logger().warning(f"{self.config.name} rejected GUI joint command: {error}")
-            return False
-        self._publish_motion_edges()
-        return True
-
-    def command_cartesian_position(self, pose: Pose) -> bool:
-        """Apply a GUI Cartesian target through the CRTK move_cp path."""
-        if not self._motion_allowed("GUI Cartesian command"):
-            return False
-        result = self.model.move_cp(pose)
-        if not result.success:
-            self._publish_warning(f"{self.config.name} rejected GUI move_cp: {result.message}")
-            self.node.get_logger().warning(
-                f"{self.config.name} rejected GUI move_cp: {result.message}"
-            )
-            self._publish_motion_failure()
-            return False
-        self._publish_motion_edges()
-        return True
+        self._operating_state_event_pending = True
+        self._command_applied(command)
 
     def _state_command_callback(self, message) -> None:
-        success, error = self._operating_state.command(message.string)
-        if not success:
-            self._publish_warning(f"rejected state_command {message.string!r}: {error}")
-            self.node.get_logger().warning(
-                f"{self.config.name} rejected state_command {message.string!r}: {error}"
-            )
-            return
-        if self._operating_state.state in (CRTKOperatingState.DISABLED, CRTKOperatingState.FAULT):
-            self.model.move_jp(self.model.measured_js().position)
-        self._publish_operating_state(self._event_stamp())
-        state_text = f"state is now {self._operating_state.state}"
-        self._publish_info(state_text)
-        self.node.get_logger().info(f"{self.config.name} {state_text}")
+        self._submit("state_command", str(message.string), servo=False)
 
     def _jaw_servo_jp_callback(self, message) -> None:
-        received_at = self._command_received()
-        if not self._motion_allowed("jaw/servo_jp"):
-            self._command_rejected()
-            return
         try:
             position = jaw_position_from_message(message)
         except ValueError as error:
             self._command_rejected()
             self.node.get_logger().warning(f"{self.config.name} rejected jaw/servo_jp: {error}")
             return
-        # The virtual instrument has no jaw dynamics. Keep a single logical jaw
-        # position and report it immediately as both measured and setpoint state.
-        if self.command_jaw_position(position):
-            self._command_applied(received_at)
-        else:
-            self._command_rejected()
+        self._submit("jaw/servo_jp", position, servo=True)
 
     def _motion_allowed(self, command: str) -> bool:
         if self._operating_state.accepts_motion:
@@ -416,87 +413,92 @@ class CRTKROSComponent:
         )
 
     def _move_jp_callback(self, message) -> None:
-        received_at = self._command_received()
-        if not self._motion_allowed("move_jp"):
-            self._command_rejected()
-            return
         try:
-            self.model.move_jp(self._positions_from_message(message))
+            target = self._positions_from_message(message)
         except ValueError as error:
             self._command_rejected()
             self.node.get_logger().warning(f"{self.config.name} rejected move_jp: {error}")
             return
-        self._publish_motion_edges()
-        self._command_applied(received_at)
+        self._submit("move_jp", target, servo=False)
 
     def _servo_jp_callback(self, message) -> None:
-        received_at = self._command_received()
-        if not self._motion_allowed("servo_jp"):
-            self._command_rejected()
-            return
         try:
-            self.model.servo_jp(self._positions_from_message(message))
+            target = self._positions_from_message(message)
         except ValueError as error:
             self._command_rejected()
             self.node.get_logger().warning(f"{self.config.name} rejected servo_jp: {error}")
             return
-        self._command_applied(received_at)
+        self._submit("servo_jp", target, servo=True)
 
     def _move_cp_callback(self, message) -> None:
-        received_at = self._command_received()
-        if not self._motion_allowed("move_cp"):
-            self._command_rejected()
-            return
         try:
-            result = self.model.move_cp(
-                self._pose_from_ros(_pose_from_ros(message), message.header.frame_id)
-            )
-            if not result.success:
-                self._ik_failure("move_cp", result.message)
-                self._publish_motion_failure()
-                self._command_rejected()
-            else:
-                self._clear_ik_warning()
-                self._publish_motion_edges()
-                self._command_applied(received_at)
+            payload = (_pose_from_ros(message), str(message.header.frame_id))
         except ValueError as error:
             self._command_rejected()
             self._publish_warning(f"rejected move_cp: {error}")
             self.node.get_logger().warning(f"{self.config.name} rejected move_cp: {error}")
-            self._publish_motion_failure()
+            return
+        self._submit("move_cp", payload, servo=False)
 
     def _servo_cp_callback(self, message) -> None:
-        received_at = self._command_received()
-        if self._pending_servo_cp is not None:
-            self._commands_coalesced += 1
-        self._pending_servo_cp = message
-        self._pending_servo_cp_received_at = received_at
-
-    def process_pending_commands(self) -> None:
-        """Apply the newest deferred servo command from the simulation loop."""
-        message = self._pending_servo_cp
-        received_at = self._pending_servo_cp_received_at
-        self._pending_servo_cp = None
-        self._pending_servo_cp_received_at = None
-        if message is None:
-            return
-        if not self._motion_allowed("servo_cp"):
-            self._command_rejected()
-            return
         try:
-            result = self.model.move_cp(
-                self._pose_from_ros(_pose_from_ros(message), message.header.frame_id)
-            )
-            if not result.success:
-                self._ik_failure("servo_cp", result.message)
-                self._command_rejected()
-            else:
-                self._clear_ik_warning()
-                self._command_applied(received_at)
+            payload = (_pose_from_ros(message), str(message.header.frame_id))
         except ValueError as error:
             self._command_rejected()
             self._publish_warning(f"rejected servo_cp: {error}")
             self.node.get_logger().warning(f"{self.config.name} rejected servo_cp: {error}")
+            return
+        self._submit("servo_cp", payload, servo=True)
+
+    def process_pending_commands(self) -> None:
+        """Apply all queued commands from the Isaac-owned control loop."""
+        for command in self.commands.drain():
+            if command.channel == "state_command":
+                self._apply_state_command(command)
+                continue
+            if not self._motion_allowed(command.channel):
+                self._command_rejected()
+                if command.channel.startswith("move_"):
+                    self._publish_motion_failure()
+                continue
+            try:
+                if command.channel == "jaw/servo_jp":
+                    position = float(command.payload)
+                    if not self._jaw_lower <= position <= self._jaw_upper:
+                        raise ValueError("jaw position exceeds configured limits")
+                    self._jaw_position = position
+                    self._jaw_velocity = 0.0
+                elif command.channel == "move_jp":
+                    self.model.move_jp(command.payload)
+                    self._publish_motion_edges()
+                elif command.channel == "servo_jp":
+                    self.model.servo_jp(command.payload)
+                elif command.channel in {"move_cp", "servo_cp", "move_cp_world"}:
+                    if command.channel == "move_cp_world":
+                        target = command.payload
+                    else:
+                        pose, frame_id = command.payload
+                        target = self._pose_from_ros(pose, frame_id)
+                    result = self.model.move_cp(target)
+                    if not result.success:
+                        self._ik_failure(command.channel, result.message)
+                        if command.channel.startswith("move_"):
+                            self._publish_motion_failure()
+                        self._command_rejected()
+                        continue
+                    self._clear_ik_warning()
+                    if command.channel.startswith("move_"):
+                        self._publish_motion_edges()
+                else:
+                    raise ValueError(f"unsupported command channel {command.channel!r}")
+            except ValueError as error:
+                self._command_rejected()
+                self._publish_warning(f"rejected {command.channel}: {error}")
+                self.node.get_logger().warning(
+                    f"{self.config.name} rejected {command.channel}: {error}"
+                )
+                continue
+            self._command_applied(command)
 
     def _publish_jaw_state(self, stamp) -> None:
         if not self._has_jaw:
@@ -551,14 +553,62 @@ class CRTKROSComponent:
         self._motion_failure_pending = True
         self._publish_operating_state(stamp, busy_override=True)
 
-    def publish(self, stamp, valid: bool = True) -> None:
-        """Publish periodic state, using zero time when simulation is paused."""
+    @property
+    def latest_snapshot(self) -> ArmSnapshot | None:
+        """Most recent immutable simulator-owned state for ROS/GUI consumers."""
+        return self._latest_snapshot
+
+    def _capture_snapshot(self, stamp, valid: bool) -> ArmSnapshot:
+        """Capture backend state after command application and kinematic stepping."""
+        measured_js = self.model.measured_js()
+        setpoint_js = self.model.goal_js()
+        measured_pose = self.model.measured_cp()
+        measured_twist = self.model.measured_cv()
+        simulation_time = float(stamp.sec) + float(stamp.nanosec) * 1.0e-9
+        snapshot = ArmSnapshot(
+            sequence=self._snapshot_sequence,
+            simulation_time=simulation_time,
+            valid=bool(valid),
+            measured_js=SnapshotJointState(
+                measured_js.names, measured_js.position, measured_js.velocity
+            ),
+            setpoint_js=SnapshotJointState(
+                setpoint_js.names, setpoint_js.position, setpoint_js.velocity
+            ),
+            measured_cp_world=SnapshotPose(
+                measured_pose.position, measured_pose.orientation
+            ),
+            # The current kinematic implementation has no independently
+            # measured Cartesian controller state.
+            setpoint_cp_world=SnapshotPose(
+                measured_pose.position, measured_pose.orientation
+            ),
+            measured_cv_world=SnapshotTwist(
+                measured_twist.linear, measured_twist.angular
+            ),
+            jaw_measured=self._jaw_position if self._has_jaw else None,
+            jaw_setpoint=self._jaw_position if self._has_jaw else None,
+            operating_state=OperatingStateSnapshot(
+                self._operating_state.state,
+                self._operating_state.is_homed,
+                self._operating_state.accepts_motion and self._motion_busy,
+            ),
+            operating_state_event=self._operating_state_event_pending,
+        )
+        self._snapshot_sequence += 1
+        self._latest_snapshot = snapshot
+        self._operating_state_event_pending = False
+        return snapshot
+
+    def publish(self, stamp, valid: bool = True) -> ArmSnapshot:
+        """Publish the newest simulator-owned immutable state snapshot."""
         if not valid:
             stamp = type(stamp)()
-        joint_state = self.model.measured_js()
-        world_pose = self.model.measured_cp()
+        snapshot = self._capture_snapshot(stamp, valid)
+        joint_state = snapshot.measured_js
+        world_pose = snapshot.measured_cp_world
         pose = self._pose_for_ros(world_pose)
-        linear, angular = self._twist_for_ros(world_pose, self.model.measured_cv())
+        linear, angular = self._twist_for_ros(world_pose, snapshot.measured_cv_world)
 
         measured_js = self._JointState()
         measured_js.header.stamp = stamp
@@ -588,8 +638,8 @@ class CRTKROSComponent:
         setpoint = self._JointState()
         setpoint.header.stamp = stamp
         setpoint.header.frame_id = self._frame_id
-        setpoint.name = list(joint_state.names)
-        setpoint.position = self.model.goal_js().position.tolist()
+        setpoint.name = list(snapshot.setpoint_js.names)
+        setpoint.position = snapshot.setpoint_js.position.tolist()
         self.setpoint_js_publisher.publish(setpoint)
         self._publish_jaw_state(stamp)
         # Servo commands do not affect busy. Complete only a move operation
@@ -605,3 +655,4 @@ class CRTKROSComponent:
             self._motion_start_stamp = None
             self._motion_failure_pending = False
             self._publish_operating_state(stamp, busy_override=False)
+        return snapshot

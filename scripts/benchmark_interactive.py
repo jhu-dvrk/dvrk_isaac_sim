@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 from pathlib import Path
 import re
 import signal
@@ -29,7 +30,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from dvrk_isaac_sim.config import JointConfig, load_robot_config
+from dvrk_arm_description import JointConfig, load_robot_config
 from dvrk_isaac_sim.scene import load_scene, load_simulator_config, resolve_scene_path
 
 
@@ -282,13 +283,18 @@ def main() -> int:
     launch_scene_path = temporary_scene or scene_path
     launch = [
         "ros2", "launch", "dvrk_isaac_sim", "simulator.launch.py",
-        f"config:={config_path}", f"scene:={launch_scene_path}", "headless:=true", "duration:=0",
+        f"config:={config_path}", f"scene:={launch_scene_path}",
     ]
-    if args.renderer:
-        launch.append(f"renderer:={args.renderer}")
     print("Launching: " + " ".join(str(item) for item in launch), flush=True)
     launch_log = tempfile.NamedTemporaryFile(prefix="dvrk-isaac-benchmark-", suffix=".log", delete=False)
-    launch_process = subprocess.Popen(launch, stdout=launch_log, stderr=subprocess.STDOUT, text=True)
+    launch_environment = os.environ.copy()
+    launch_environment["DVRK_SIMULATOR_FORCE_HEADLESS"] = "true"
+    if args.renderer:
+        launch_environment["DVRK_SIMULATOR_RENDERER"] = args.renderer
+    launch_process = subprocess.Popen(
+        launch, stdout=launch_log, stderr=subprocess.STDOUT, text=True,
+        env=launch_environment,
+    )
     monitor = None
     rtsp_process = None
     rtsp_log = None

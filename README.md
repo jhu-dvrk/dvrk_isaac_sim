@@ -24,9 +24,8 @@ Full patient-cart CAD, dynamics, contact simulation, and hardware-runtime depend
 - [Frames and conventions](docs/frames.md)
 - [ROS 2 interface](docs/ros_interface.md)
 - [Implementation roadmap](docs/implementation_plan.md)
-- [Shared PSM defaults](share/arms/PSM.yaml)
-- [PSM1 configuration](share/arms/PSM1.yaml)
-- [ECM configuration](share/arms/ECM.yaml)
+- [Simulator-base migration plan](docs/simulator_base_migration_plan.md)
+- Shared PSM/ECM configuration is provided by `dvrk_simulator_base`.
 - [Two-PSM scene](share/scenes/ECM_PSM1_PSM2_mono.yaml)
 - [Three-PSM mono scene](share/scenes/ECM_PSM1_PSM2_PSM3_mono.yaml)
 - [Three-PSM stereo scene](share/scenes/ECM_PSM1_PSM2_PSM3_stereo.yaml)
@@ -72,7 +71,24 @@ Start the full virtual cart with the default three PSMs and kinematic ECM, or se
 ros2 launch dvrk_isaac_sim simulator.launch.py config:=/path/to/my-dvrk-isaac.yaml scene:=PSM1_420006_mono.yaml
 ```
 
-The default renderer is `RaytracedLighting`, which provides a visible viewport on the supported Isaac Sim setup. Instruments, endoscopes, and camera settings are defined by each scene. In GUI mode, the `dVRK CRTK Monitor` window lists every configured arm, shows live state and measured joints in degrees/mm, and provides joint-target and operating-state controls. The simulator adds neutral lighting and a gray environment so dark instruments remain visible. `simulation_rate_hz` controls the ROS/kinematics loop and `render_rate_hz` independently controls wall-clock rendering; their defaults are 120 Hz and 30 Hz. A once-per-second performance line reports real-time factor, actual control/render/camera rates, and render time.
+The public launch interface has only `scene:=` and optional `config:=`.
+Renderer, headless mode, duration, rates, ROS middleware, and generated asset
+location belong in the backend configuration; robots, instruments, camera, and
+transport settings belong in the scene YAML.
+
+The default renderer is `RaytracedLighting`, which provides a visible viewport on the supported Isaac Sim setup. Instruments, endoscopes, and camera settings are defined by each scene. The simulator adds neutral lighting and a gray environment so dark instruments remain visible. `simulation_rate_hz` controls the ROS/kinematics loop and `render_rate_hz` independently controls wall-clock rendering; their defaults are 120 Hz and 30 Hz. A once-per-second performance line reports real-time factor, actual control/render/camera rates, and render time.
+
+The CRTK monitor is provided by the external PyQt5 rqt plugins, never by an
+Isaac Kit window. After starting the simulator, launch one Arm panel for each
+configured robot:
+
+```bash
+rqt --standalone rqt_crtk/Arm --args --arm PSM1
+```
+
+It displays state in degrees/mm and sends normal `state_command`, `move_jp`,
+`jaw/move_jp`, and `move_cp` CRTK messages. Use `rqt_crtk/Diagnostics` for
+the simulator health and timing data published on `/diagnostics`.
 
 The ECM has no mesh in the full-cart scene. Its kinematic optical frame drives the Isaac camera. Mono publishes `/ECM/image_raw` and `/ECM/camera_info`. Stereo publishes one synchronized side-by-side image on `/ECM/image_raw`; its tiled RTSP stream uses `rtsp://<host>:8554/ECM`.
 
@@ -87,7 +103,7 @@ The initial ROS 2 adapter can be run for one configured component:
 ```bash
 ros2 run dvrk_isaac_sim dvrk_isaac_sim_ros \
   --ros-args -r __ns:=/PSM1 \
-  -p robot_config:=/path/to/share/arms/PSM1.yaml
+  -p robot_config:="$(ros2 pkg prefix dvrk_arm_description)/share/dvrk_arm_description/arms/PSM1.yaml"
 ```
 
 ## Tested teleoperation
@@ -137,6 +153,17 @@ ros2 run dvrk_robot dvrk_system -j system-MTML-MTMR-Haply-patient-cart-ROS.json
 
 The Haply configuration expects the Haply service at `ws://localhost:10001`. The console input mode is simulated; Haply MTML/MTMR provide the teleoperation devices, while PSM and ECM state comes from Isaac Sim over ROS 2.
 
+### OpenXR
+
+The OpenXR patient-cart launch uses the full three-PSM/ECM stereo RTSP scene:
+
+```bash
+ros2 launch dvrk_isaac_sim open_xr.launch.py
+```
+
+See [the OpenXR configuration](share/open-xr/README.md) for prerequisites and
+the optional `config:=` and `console:=` arguments.
+
 ## Testing
 
 The current automated tests are pure-Python tests for configuration, scene
@@ -157,24 +184,14 @@ cd /path/to/isaac_sim_ws
 colcon build --symlink-install --packages-select dvrk_isaac_sim
 ```
 
-The combined test runner executes the Python tests and validates all YAML files
-by default. Run it from the package directory after building and sourcing the
-workspace:
+To run one bounded headless Isaac Sim scene smoke test:
 
 ```bash
-cd /path/to/isaac_sim_ws/src/dvrk_isaac_sim
-python3.12 scripts/tests
+ros2 launch dvrk_isaac_sim test_scene.launch.py \
+  scene:=ECM_PSM1_PSM2_PSM3_stereo.yaml
 ```
 
-To additionally run the headless Isaac Sim integration test for every configured
-scene:
-
-```bash
-python3.12 scripts/tests --isaac
-```
-
-You can restrict the Isaac Sim phase to selected scenes with repeated
-`--scene` options.
+Pass `timeout:=5.0` only when a longer smoke-test window is needed.
 
 The repository also provides a configuration-only validation command. From the
 workspace root:

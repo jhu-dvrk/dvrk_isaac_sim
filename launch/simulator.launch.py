@@ -17,9 +17,7 @@ def _start_sim(context):
     config_path = Path(LaunchConfiguration("config").perform(context)).expanduser().resolve()
     simulator_config = load_simulator_config(config_path)
 
-    isaac_dir_arg = LaunchConfiguration("isaac_sim_dir").perform(context)
-    isaac_dir = (Path(isaac_dir_arg).expanduser() if isaac_dir_arg
-                 else simulator_config.isaac_sim_dir)
+    isaac_dir = simulator_config.isaac_sim_dir
     if isaac_dir is None:
         raise RuntimeError(
             "Isaac Sim path is not configured. Build the workspace with "
@@ -65,22 +63,9 @@ def _start_sim(context):
 
     command = [str(isaac_python), str(package_share / "scripts" / "simulator.py"),
                "--config", str(config_path), "--scene", str(scene_config)]
-    renderer = LaunchConfiguration("renderer").perform(context)
-    if renderer:
-        command.extend(["--renderer", renderer])
-    if LaunchConfiguration("headless").perform(context).lower() in {"true", "1", "yes"}:
-        command.append("--headless")
-    duration = LaunchConfiguration("duration").perform(context)
-    if duration and float(duration) > 0.0:
-        command.extend(["--duration", duration])
-    if LaunchConfiguration("run_crtk_integration_test").perform(context).lower() in {"true", "1", "yes"}:
-        command.append("--run-crtk-integration-test")
-
-    ros_distro = LaunchConfiguration("ros_distro").perform(context) or simulator_config.ros_distro
-    rmw_implementation = LaunchConfiguration("rmw_implementation").perform(context) or simulator_config.rmw_implementation
     environment = {
-        "ROS_DISTRO": ros_distro,
-        "RMW_IMPLEMENTATION": rmw_implementation,
+        "ROS_DISTRO": simulator_config.ros_distro,
+        "RMW_IMPLEMENTATION": simulator_config.rmw_implementation,
         "PYTHONUNBUFFERED": "1",
     }
     if conversion_commands:
@@ -105,19 +90,6 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument("config", default_value=default_config,
                               description="Saved simulator config YAML"),
-        DeclareLaunchArgument("isaac_sim_dir", default_value="",
-                              description="Optional Isaac Sim path override"),
-        DeclareLaunchArgument("scene", default_value="",
-                              description="Scene YAML path or filename under share/scenes"),
-        DeclareLaunchArgument("renderer", default_value="",
-                              description="Optional renderer override"),
-        DeclareLaunchArgument("headless", default_value="",
-                              description="Optional headless override; otherwise use config"),
-        DeclareLaunchArgument("duration", default_value="",
-                              description="Optional duration override in seconds"),
-        DeclareLaunchArgument("run_crtk_integration_test", default_value="false",
-                              description="Run the test-only CRTK integration test"),
-        DeclareLaunchArgument("ros_distro", default_value=""),
-        DeclareLaunchArgument("rmw_implementation", default_value=""),
+        DeclareLaunchArgument("scene", description="Scene YAML path or filename under share/scenes"),
         OpaqueFunction(function=_start_sim),
     ])

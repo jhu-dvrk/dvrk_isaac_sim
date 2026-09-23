@@ -159,22 +159,18 @@ source /path/to/isaac_sim_ws/install/setup.bash
 ros2 run dvrk_isaac_sim dvrk_isaac_sim_ros \
   --ros-args \
   -r __ns:=/PSM1 \
-  -p robot_config:=/path/to/dvrk_isaac_sim/share/arms/PSM1.yaml
+  -p robot_config:="$(ros2 pkg prefix dvrk_arm_description)/share/dvrk_arm_description/arms/PSM1.yaml"
 ```
 
 The Isaac Sim integration test below uses the same sourced environment to launch the simulator and its in-process CRTK ROS adapter.
 
-For the complete local test sequence, use the repository test runner after
-building and sourcing the workspace:
+Run the package unit tests with `colcon test` or `python3 -m pytest -q`.
+Run a bounded headless test of one configured scene with:
 
 ```bash
-cd /path/to/isaac_sim_ws/src/dvrk_isaac_sim
-python3.12 scripts/tests
+ros2 launch dvrk_isaac_sim test_scene.launch.py \
+  scene:=ECM_PSM1_PSM2_PSM3_stereo.yaml
 ```
-
-This runs the pure-Python tests and configuration validation. The headless
-Isaac Sim integration tests are opt-in with
-`python3.12 scripts/tests --isaac`.
 
 ## Interactive full-cart benchmark
 
@@ -253,12 +249,13 @@ individual PSM examples (`PSM1_420006_mono.yaml`, `PSM2_420093_mono.yaml`, and
 `PSM3_420006_mono.yaml`) plus two- and three-PSM cart scenes. Scene files select the
 robots, frames, and instrument variants.
 
-The launch command has only a few user-facing options:
+The simulator launch command has two user-facing options:
 
 - `config:=...` selects a saved config file;
 - `scene:=...` selects a scene filename under `share/scenes` or an explicit YAML path;
-- `headless:=true` and `duration:=...` are one-shot runtime overrides;
-- `isaac_sim_dir:=...` temporarily overrides the saved Isaac Sim path.
+
+`test_scene.launch.py` accepts those options and `timeout:=...` for the
+bounded test window. Runtime settings stay in the backend configuration.
 
 If neither `scene:=...` nor `scene` in the config is provided, startup stops and
 prints every YAML scene found in the config file's `scenes` directory.
@@ -342,4 +339,3 @@ ros2 topic pub --once /PSM1/move_jp sensor_msgs/msg/JointState \
 
 The corresponding `measured_js` and `measured_cp` values should move over
 subsequent simulation steps.
-

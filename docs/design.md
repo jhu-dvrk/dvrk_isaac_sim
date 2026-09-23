@@ -157,7 +157,10 @@ The ECM camera is configured at runtime rather than embedded in the endoscope as
 
 ## 6. Scene and base-frame configuration
 
-Robot YAML files support a repository-local `include` key. Included documents are resolved relative to the including file and deep-merged before validation; child mappings override shared values while lists are replaced as a whole. The three PSM instance files include `share/arms/PSM.yaml`, which contains the common kinematic, velocity, instrument, and control defaults.
+Robot YAML files are installed by `dvrk_simulator_base`. They support relative
+`include` keys and deterministic deep merging; child mappings override shared
+values while lists are replaced as a whole. Isaac scene profiles reference
+these canonical files with `package://dvrk_arm_description/arms/...` URIs.
 
 
 Scene profiles select the devices launched in a simulation. The initial profiles are:

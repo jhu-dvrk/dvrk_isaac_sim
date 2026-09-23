@@ -9,7 +9,7 @@ The first ROS 2 adapter is a Python node installed as `dvrk_isaac_sim_ros`. It a
 ```bash
 ros2 run dvrk_isaac_sim dvrk_isaac_sim_ros \
   --ros-args -r __ns:=/PSM1 \
-  -p robot_config:=/path/to/share/arms/PSM1.yaml
+  -p robot_config:="$(ros2 pkg prefix dvrk_arm_description)/share/dvrk_arm_description/arms/PSM1.yaml"
 ```
 
 ## 1. Namespaces
@@ -123,9 +123,19 @@ The current adapter also publishes state topics:
 
 ## GUI monitor and controls
 
-Non-headless Isaac Sim runs open a `dVRK CRTK Monitor` window. Each configured PSM or ECM has a panel showing its CRTK operating state, homed status, and measured joints. Revolute joints are displayed in degrees; insertion joints are displayed in millimetres.
+`rqt_crtk/Arm` is an external PyQt5 ROS 2 panel, not an Isaac Kit window. Start
+it after the simulator, for example:
 
-The joint fields are editable target values. `Apply joint targets` sends them through the same kinematic command path as `move_jp` and obeys the operating-state gate. The operating-state selector and `Home` button use the same state-machine path as the ROS `state_command` interface.
+```bash
+rqt --standalone rqt_crtk/Arm --args --arm PSM1
+```
+
+Each configured PSM or ECM has a panel showing its CRTK operating state, homed status, and measured joints. Revolute joints are displayed in degrees; insertion joints are displayed in millimetres.
+
+The joint fields are editable target values. `Apply` publishes `move_jp` (and
+`jaw/move_jp` for PSMs); Cartesian Apply publishes `move_cp` in the most
+recently received CRTK Cartesian frame. The operating-state selector publishes
+the same `state_command` interface used by any other ROS client.
 
 ## 3. Time and pause semantics
 

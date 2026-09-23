@@ -2,43 +2,16 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import math
+from pathlib import Path
 from typing import Iterable
 
 import numpy as np
 
-from .config import RobotConfig
+from dvrk_arm_description import RobotConfig
+from dvrk_simulator_base.rotations import quaternion_matrix_xyzw as _quaternion_matrix_xyzw
+from dvrk_simulator_base.types import IKResult, JointState, Pose, Twist
 from .urdf_kinematics import UrdfKinematicChain
-from .rotations import quaternion_matrix_xyzw as _quaternion_matrix_xyzw
-
-
-@dataclass(frozen=True)
-class Pose:
-    position: np.ndarray
-    orientation: np.ndarray
-
-
-@dataclass(frozen=True)
-class Twist:
-    linear: np.ndarray
-    angular: np.ndarray
-
-
-@dataclass(frozen=True)
-class JointState:
-    names: tuple[str, ...]
-    position: np.ndarray
-    velocity: np.ndarray
-
-
-@dataclass(frozen=True)
-class IKResult:
-    position: np.ndarray
-    success: bool
-    iterations: int
-    position_error: float
-    message: str = ""
 
 
 def _rpy_matrix(roll: float, pitch: float, yaw: float) -> np.ndarray:
@@ -74,7 +47,9 @@ def _transform(rotation: np.ndarray, translation: Iterable[float]) -> np.ndarray
 class CRTKComponent:
     """Backend-independent component exposing CRTK-style state and commands."""
 
-    def __init__(self, config: RobotConfig, adaptor_offset: float, adaptor_rpy: tuple[float, float, float]):
+    def __init__(self, config: RobotConfig, adaptor_offset: float,
+                 adaptor_rpy: tuple[float, float, float],
+                 kinematics_manifest: str | Path | None = None):
         self.config = config
         self._q = config.home_position.copy()
         self._qdot = np.zeros(len(config.joints), dtype=float)
@@ -107,9 +82,10 @@ class CRTKComponent:
         self._cached_q: np.ndarray | None = None
         self._cached_transform: np.ndarray | None = None
         self._cached_jacobian: np.ndarray | None = None
-        self._urdf_chain = (UrdfKinematicChain(config.kinematics_manifest)
-                            if config.kinematics_manifest is not None
-                            and config.kinematics_manifest.is_file() else None)
+        manifest = (Path(kinematics_manifest).expanduser().resolve()
+                    if kinematics_manifest is not None else None)
+        self._urdf_chain = (UrdfKinematicChain(manifest)
+                            if manifest is not None and manifest.is_file() else None)
         if self._urdf_chain is not None and self._urdf_chain.active_joints != self._joint_names:
             raise ValueError(
                 f"URDF manifest joints {self._urdf_chain.active_joints} do not match "
@@ -271,7 +247,10 @@ class CRTKComponent:
                 jacobian = jacobian[:3, :]
             error_norm = float(np.linalg.norm(error))
             if error_norm < tolerance:
-                return IKResult(q, True, iteration, error_norm, "pose converged" if use_orientation else "position converged")
+                return IKResult(
+                    q, True, iterations=iteration, position_error=error_norm,
+                    message="pose converged" if use_orientation else "position converged",
+                )
             step = jacobian.T @ np.linalg.solve(jacobian @ jacobian.T + 1e-6 * np.eye(jacobian.shape[0]), error)
             q = self._clip_joint_position(q + 0.5 * step)
         pose = self.compute_fk(q)
@@ -285,7 +264,11 @@ class CRTKComponent:
             error_norm = float(np.linalg.norm(np.concatenate((position_error, orientation_error))))
         else:
             error_norm = float(np.linalg.norm(position_error))
-        return IKResult(q, error_norm < tolerance, max_iterations, error_norm, "pose IK did not converge" if use_orientation else "position IK did not converge")
+        return IKResult(
+            q, error_norm < tolerance, iterations=max_iterations,
+            position_error=error_norm,
+            message="pose IK did not converge" if use_orientation else "position IK did not converge",
+        )
 
     def move_cp(self, target: Pose) -> IKResult:
         result = self.compute_ik(target)
@@ -308,10 +291,15 @@ class CRTKComponent:
 class CRTKPSM(CRTKComponent):
     """Six-DOF virtual PSM: RCM plus roll, wrist pitch, and wrist yaw."""
 
-    def __init__(self, config: RobotConfig):
+    def __init__(self, config: RobotConfig,
+                 kinematics_manifest: str | Path | None = None):
         if config.type != "PSM" or len(config.joints) != 6:
             raise ValueError("CRTKPSM requires six configured joints")
-        super().__init__(config, adaptor_offset=0.4826, adaptor_rpy=(math.pi, 0.0, -math.pi / 2.0))
+        super().__init__(
+            config, adaptor_offset=0.4826,
+            adaptor_rpy=(math.pi, 0.0, -math.pi / 2.0),
+            kinematics_manifest=kinematics_manifest,
+        )
 
     def _make_joint_origins(self) -> tuple[tuple[np.ndarray, tuple[float, float, float]], ...]:
         origins = list(super()._make_joint_origins())
@@ -338,10 +326,15 @@ class CRTKPSM(CRTKComponent):
 class CRTKECM(CRTKComponent):
     """Four-DOF virtual ECM: yaw, pitch, insertion, and roll."""
 
-    def __init__(self, config: RobotConfig):
+    def __init__(self, config: RobotConfig,
+                 kinematics_manifest: str | Path | None = None):
         if config.type != "ECM" or len(config.joints) != 4:
             raise ValueError("CRTKECM requires a four-joint ECM configuration")
-        super().__init__(config, adaptor_offset=0.3829, adaptor_rpy=(math.pi, 0.0, math.pi / 2.0))
+        super().__init__(
+            config, adaptor_offset=0.3829,
+            adaptor_rpy=(math.pi, 0.0, math.pi / 2.0),
+            kinematics_manifest=kinematics_manifest,
+        )
 
     def _joint_axes(self) -> tuple[np.ndarray, ...]:
         return (

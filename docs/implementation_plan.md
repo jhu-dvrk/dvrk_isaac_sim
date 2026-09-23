@@ -14,7 +14,7 @@ The repository now has:
 - CRTK ROS 2 topics, operating-state events, QoS, `/clock`, and paused zero-stamped periodic data;
 - manifest-driven visual-only USD updates, mono/stereo ECM image publication, and GUI monitoring;
 - workspace-root `.generated/isaacsim-6.0` asset caching;
-- `simulator.launch.py`, `simulator.py`, configuration validation, and the combined `scripts/tests` runner;
+- `simulator.launch.py`, `test_scene.launch.py`, `simulator.py`, and configuration validation;
 - 16 pure-Python tests plus headless Isaac Sim scene integration tests.
 
 Version 1 does not require backward-compatible code or YAML aliases. Acronyms
@@ -106,7 +106,7 @@ remain uppercase in APIs and filenames: `CRTK`, `PSM`, `ECM`, `USD`, and `URDF`.
 - Add formatting/linting configuration.
 - Add Apache-2.0 license and replace placeholder maintainer metadata.
 - Decide whether documentation should be installed with the package.
-- Keep repository automation deferred for now; use `scripts/tests` for local validation.
+- Keep repository automation deferred for now; use `colcon test` for local validation.
 
 ## Priority 7 — Additional devices and scene content
 

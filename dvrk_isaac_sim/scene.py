@@ -8,7 +8,7 @@ from typing import Any
 
 import yaml
 
-from .config import load_robot_document
+from dvrk_arm_description import load_robot_document
 
 
 @dataclass(frozen=True)
@@ -167,13 +167,31 @@ def _robot_config_path(scene_path: Path, configured: Any) -> Path:
         configured = configured.get("config")
     if not configured:
         raise ValueError(f"{scene_path}: scene robot is missing config")
-    path = Path(str(configured)).expanduser()
+    configured_text = str(configured)
+    if configured_text.startswith("package://"):
+        package, separator, relative = configured_text[len("package://"):].partition("/")
+        if not package or not separator or not relative:
+            raise ValueError(f"{scene_path}: invalid package asset URI {configured_text!r}")
+        try:
+            from ament_index_python.packages import get_package_share_directory
+
+            resolved = (Path(get_package_share_directory(package)) / relative).resolve()
+        except Exception as error:
+            raise FileNotFoundError(
+                f"{scene_path}: could not resolve robot configuration {configured_text!r}"
+            ) from error
+        if not resolved.is_file():
+            raise FileNotFoundError(
+                f"{scene_path}: robot configuration does not exist: {resolved}"
+            )
+        return resolved
+
+    path = Path(configured_text).expanduser()
     if path.is_absolute():
         return path.resolve()
 
     # A standalone scene may provide a custom robot definition next to its
-    # package root.  Otherwise use the canonical definitions installed with
-    # dvrk_isaac_sim, so scene bundles need not duplicate ECM/PSM YAML files.
+    # package root.  Package-owned robot definitions use package:// URIs.
     scene_relative = (scene_path.parent.parent.parent / path).resolve()
     if scene_relative.is_file():
         return scene_relative

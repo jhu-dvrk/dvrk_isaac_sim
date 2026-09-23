@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+import os
 from pathlib import Path
 import sys
 import threading
@@ -52,8 +53,6 @@ def _arguments() -> argparse.Namespace:
         default=None,
         help="override the renderer selected by the simulator config",
     )
-    parser.add_argument("--run-crtk-integration-test", action="store_true",
-                        help="run the test-only CRTK integration test")
     args = parser.parse_args()
 
     config_path = args.config.expanduser().resolve()
@@ -68,6 +67,15 @@ def _arguments() -> argparse.Namespace:
     args.renderer = simulator_config.renderer if args.renderer is None else args.renderer
     args.headless = simulator_config.headless if args.headless is None else args.headless
     args.duration = simulator_config.duration if args.duration is None else args.duration
+    if os.environ.get("DVRK_SIMULATOR_FORCE_HEADLESS") == "true":
+        args.headless = True
+    if renderer := os.environ.get("DVRK_SIMULATOR_RENDERER"):
+        args.renderer = renderer
+    test_timeout = os.environ.get("DVRK_SIMULATOR_TEST_TIMEOUT")
+    args.run_crtk_integration_test = test_timeout is not None
+    if test_timeout is not None:
+        args.headless = True
+        args.duration = float(test_timeout)
     args.simulation_rate_hz = simulator_config.simulation_rate_hz
     args.render_rate_hz = simulator_config.render_rate_hz
     args.scene_camera = args.scene_model.camera.as_dict()
@@ -329,7 +337,6 @@ def main() -> int:
     })
     nodes = []
     executor = None
-    ui_window = None
     control_loop = None
     try:
         from isaacsim.core.utils.extensions import enable_extension
@@ -356,6 +363,7 @@ def main() -> int:
         import rclpy
         from rclpy.node import Node
         from crtk_msgs.msg import OperatingState
+        from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
         from rosgraph_msgs.msg import Clock
         from omni.timeline import get_timeline_interface
         from pxr import Sdf
@@ -367,7 +375,7 @@ def main() -> int:
         if str(package_root) not in sys.path:
             sys.path.insert(0, str(package_root))
 
-        from dvrk_isaac_sim.config import load_robot_config
+        from dvrk_arm_description import load_robot_config
         from dvrk_isaac_sim.kinematics import CRTKECM, CRTKPSM
         from dvrk_isaac_sim.ros_interface import CRTKROSComponent
         from dvrk_isaac_sim.usd_visual import CRTKUSDVisual
@@ -383,13 +391,15 @@ def main() -> int:
                           manifest: Path | None = None, instrument: str | None = None):
             frame = frame or {}
             config = load_robot_config(
-                config_path, manifest,
-                frame.get("position"), frame.get("orientation_xyzw"), instrument
+                config_path,
+                base_position=frame.get("position"),
+                base_orientation_xyzw=frame.get("orientation_xyzw"),
+                instrument=instrument,
             )
             if config.type == "PSM":
-                model = CRTKPSM(config)
+                model = CRTKPSM(config, kinematics_manifest=manifest)
             elif config.type == "ECM":
-                model = CRTKECM(config)
+                model = CRTKECM(config, kinematics_manifest=manifest)
             else:
                 raise ValueError(f"Unsupported robot type: {config.type}")
             node = Node(f"dvrk_isaac_sim_{config.name}", namespace=f"/{namespace}")
@@ -402,7 +412,7 @@ def main() -> int:
 
             stage = omni.usd.get_context().get_stage()
             visual = (
-                CRTKUSDVisual(config.name, config.kinematics_manifest)
+                CRTKUSDVisual(config.name, manifest)
                 if stage.GetPrimAtPath(f"/World/{config.name}").IsValid()
                 else None
             )
@@ -461,12 +471,6 @@ def main() -> int:
         if fabric_visual is not None:
             fabric_visual.flush()
 
-        if not args.headless:
-            from dvrk_isaac_sim.isaac_ui import IsaacCRTKWindow
-            ui_window = IsaacCRTKWindow(
-                [component for _, component, _, _ in nodes], component_lock
-            )
-
         # Advance ECM first so every PSM reads the current, not previous-step,
         # camera pose when converting Cartesian state and commands.
         ordered_nodes = sorted(
@@ -478,7 +482,7 @@ def main() -> int:
             timeline, args.simulation_rate_hz, args.render_rate_hz
         )
         timeline.play()
-        # Route the startup pose through the same move path used by the GUI
+        # Route the startup pose through the same move path used by ROS clients.
         # and ROS move_jp callbacks.  Besides publishing the normal busy edge,
         # this makes startup initialization observable to CRTK clients rather
         # than silently changing only the internal model state.
@@ -496,6 +500,40 @@ def main() -> int:
         for _, component, _, _ in nodes:
             component.publish_tool_type()
         clock_publisher = nodes[0][0].create_publisher(Clock, "/clock", 10)
+        diagnostics_publisher = nodes[0][0].create_publisher(
+            DiagnosticArray, "/diagnostics", 10
+        )
+
+        def publish_runtime_diagnostics(
+            simulation_time: float,
+            control_hz: float,
+            simulation_hz: float,
+            render_hz: float,
+            camera_hz: float,
+            real_time_factor: float,
+            state_age_ms: float,
+        ) -> None:
+            status = DiagnosticStatus()
+            status.name = "dvrk_isaac_sim/runtime"
+            status.hardware_id = "dvrk_isaac_sim"
+            status.level = (
+                DiagnosticStatus.OK
+                if control_hz >= 0.9 * args.simulation_rate_hz else DiagnosticStatus.WARN
+            )
+            status.message = "running" if status.level == DiagnosticStatus.OK else "control rate below target"
+            status.values = [
+                KeyValue(key="control_hz", value=f"{control_hz:.1f}"),
+                KeyValue(key="simulation_hz", value=f"{simulation_hz:.1f}"),
+                KeyValue(key="render_hz", value=f"{render_hz:.1f}"),
+                KeyValue(key="camera_hz", value=f"{camera_hz:.1f}"),
+                KeyValue(key="real_time_factor", value=f"{real_time_factor:.3f}"),
+                KeyValue(key="state_age_ms", value=f"{state_age_ms:.1f}"),
+                KeyValue(key="arms", value=str(len(nodes))),
+            ]
+            message = DiagnosticArray()
+            message.header.stamp = _ros_time(simulation_time)
+            message.status = [status]
+            diagnostics_publisher.publish(message)
         if args.run_crtk_integration_test:
             print("Isaac Sim CRTK integration test running", flush=True)
             for entry in scene_entries:
@@ -582,9 +620,6 @@ def main() -> int:
                 if camera is not None and playing:
                     camera.publish(current_time)
                     active_camera_frames += 1
-            if ui_window is not None:
-                ui_window.update()
-
             render_end = time.monotonic()
             next_render += render_period
             if next_render < render_end:
@@ -622,18 +657,10 @@ def main() -> int:
                     ) in snapshot.command_metrics.items()
                     if received and age_ms is not None
                 )
-                if ui_window is not None:
-                    ui_window.set_performance({
-                        "control": f"{update_hz:.1f} Hz (target {args.simulation_rate_hz:.1f})",
-                        "simulation": f"{step_hz:.1f} Hz",
-                        "ros": f"{ros_hz:.1f} spin/s",
-                        "render": f"{render_hz:.1f} Hz; {average_render_ms:.1f} ms/frame",
-                        "camera": f"{camera_hz:.1f} Hz",
-                        "timing": (
-                            f"RTF {real_time_factor:.3f}; "
-                            f"state age {average_control_age_after_ms:.1f} ms"
-                        ),
-                    })
+                publish_runtime_diagnostics(
+                    simulation_time, update_hz, step_hz, render_hz, camera_hz,
+                    real_time_factor, average_control_age_after_ms,
+                )
                 print(
                     "Simulator performance: "
                     f"real-time-factor={real_time_factor:.3f}; "
@@ -679,8 +706,6 @@ def main() -> int:
     finally:
         if control_loop is not None:
             control_loop.stop()
-        if ui_window is not None:
-            ui_window.close()
         if executor is not None:
             executor.shutdown()
         if "rclpy" in locals() and rclpy.ok():

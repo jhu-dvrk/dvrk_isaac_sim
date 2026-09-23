@@ -7,11 +7,11 @@ from typing import Any
 
 import numpy as np
 
-from .config import RobotConfig
-from .kinematics import Pose
+from dvrk_arm_description import RobotConfig
+from dvrk_simulator_base.types import Pose
 
 
-from .rotations import rotation_to_quaternion_wxyz
+from dvrk_simulator_base.rotations import rotation_to_quaternion_wxyz
 
 
 def _quaternion_wxyz(rotation: np.ndarray) -> tuple[float, float, float, float]:

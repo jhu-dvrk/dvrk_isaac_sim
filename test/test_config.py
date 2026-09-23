@@ -1,8 +1,9 @@
 from pathlib import Path
 
 import numpy as np
+from ament_index_python.packages import get_package_share_directory
 
-from dvrk_isaac_sim.config import load_robot_config
+from dvrk_arm_description import load_robot_config
 from dvrk_isaac_sim.scene import (
     available_scene_names, available_scene_paths, load_scene,
     load_simulator_config, resolve_scene_path,
@@ -10,17 +11,18 @@ from dvrk_isaac_sim.scene import (
 
 
 ROOT = Path(__file__).parents[1]
+BASE_ARMS = Path(get_package_share_directory("dvrk_simulator_base")) / "share" / "arms"
 
 
 def test_psm_config_loads():
-    config = load_robot_config(ROOT / "share/arms/PSM1.yaml")
+    config = load_robot_config(BASE_ARMS / "PSM1.yaml")
     assert config.name == "PSM1"
     assert [joint.name for joint in config.joints] == ["yaw", "pitch", "insertion", "roll", "wrist_pitch", "wrist_yaw"]
     np.testing.assert_allclose(config.home_position, [0.0, 0.0, 0.12, 0.0, 0.0, 0.0])
 
 
 def test_ecm_config_loads():
-    config = load_robot_config(ROOT / "share/arms/ECM.yaml")
+    config = load_robot_config(BASE_ARMS / "ECM.yaml")
     assert config.name == "ECM"
     assert [joint.name for joint in config.joints] == ["yaw", "pitch", "insertion", "roll"]
     np.testing.assert_allclose(config.home_position, [0.0, 0.0, 0.02, 0.0])
@@ -28,7 +30,7 @@ def test_ecm_config_loads():
 
 def test_psm_instances_include_shared_defaults():
     for name in ("PSM1", "PSM2", "PSM3"):
-        config = load_robot_config(ROOT / "share" / "arms" / f"{name}.yaml")
+        config = load_robot_config(BASE_ARMS / f"{name}.yaml")
         assert config.name == name
         assert len(config.joints) == 6
         expected_velocity = {

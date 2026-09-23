@@ -12,7 +12,6 @@ local_isaac_config = Path("share/isaac_sim.yaml")
 example_isaac_config = Path("share/isaac_sim.yaml.example")
 script_files = [
     "scripts/simulator.py",
-    "scripts/tests",
     "scripts/convert_dvrk_model.py",
     "scripts/generate_cart_frames.py",
     "scripts/validate_config.py",
@@ -133,24 +132,18 @@ if "--dry-run" not in sys.argv and not any(
         argument.startswith("--help") for argument in sys.argv):
     isaac_sim_configured = _configure_isaac_sim()
     _remove_installed_script_links()
-config_files = [
-    "share/arms/PSM.yaml",
-    "share/arms/PSM1.yaml",
-    "share/arms/PSM2.yaml",
-    "share/arms/PSM3.yaml",
-    "share/arms/ECM.yaml",
-]
 data_files = [
     ("share/ament_index/resource_index/packages", [f"resource/{package_name}"]),
     (f"share/{package_name}", ["package.xml"]),
-    (f"share/{package_name}/share/arms", [
-        *config_files,
-    ]),
     (f"share/{package_name}/share/scenes", [
         str(path) for path in sorted(Path("share/scenes").glob("*.yaml"))
     ]),
     (f"share/{package_name}/share/dvrk_systems", [
         str(path) for path in sorted(Path("share/dvrk_systems").glob("*.json"))
+    ]),
+    (f"share/{package_name}/share/open-xr", [
+        str(path) for path in sorted(Path("share/open-xr").glob("*"))
+        if path.is_file()
     ]),
 ]
 if local_isaac_config.exists():
@@ -163,11 +156,17 @@ setup(
     packages=find_packages(exclude=["test"]),
     data_files=[
         *data_files,
-        (f"share/{package_name}/launch", ["launch/simulator.launch.py"]),
+        (f"share/{package_name}/launch", [
+            "launch/simulator.launch.py",
+            "launch/test_scene.launch.py",
+            "launch/open_xr.launch.py",
+        ]),
         (f"share/{package_name}/scripts", script_files),
     ],
     install_requires=["setuptools", "numpy", "PyYAML"],
     zip_safe=True,
+    maintainer="Anton Deguet",
+    maintainer_email="anton.deguet@jhu.edu",
     entry_points={
         "console_scripts": [
             "clean_cache = dvrk_isaac_sim.clean_cache:main",

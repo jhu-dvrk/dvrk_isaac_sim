@@ -21,7 +21,7 @@ scene:
     transports: [rtsp]
     rtsp: {port: 8554, mount_path: /ECM, encoding: raw}
   robots:
-    - config: share/arms/PSM2.yaml
+    - config: package://dvrk_arm_description/arms/PSM2.yaml
       instrument: "420093"
-    - config: share/arms/ECM.yaml
+    - config: package://dvrk_arm_description/arms/ECM.yaml
       endoscope: "Si_straight"
