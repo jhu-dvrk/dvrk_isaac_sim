@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from dvrk_simulator_base.config import load_robot_config
+from dvrk_arm_description import load_robot_config
 from .kinematics import CRTKECM, CRTKPSM
 from .ros_interface import CRTKROSComponent
 

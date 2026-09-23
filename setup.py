@@ -165,6 +165,8 @@ setup(
     ],
     install_requires=["setuptools", "numpy", "PyYAML"],
     zip_safe=True,
+    maintainer="Anton Deguet",
+    maintainer_email="anton.deguet@jhu.edu",
     entry_points={
         "console_scripts": [
             "clean_cache = dvrk_isaac_sim.clean_cache:main",

@@ -375,7 +375,7 @@ def main() -> int:
         if str(package_root) not in sys.path:
             sys.path.insert(0, str(package_root))
 
-        from dvrk_simulator_base.config import load_robot_config
+        from dvrk_arm_description import load_robot_config
         from dvrk_isaac_sim.kinematics import CRTKECM, CRTKPSM
         from dvrk_isaac_sim.ros_interface import CRTKROSComponent
         from dvrk_isaac_sim.usd_visual import CRTKUSDVisual

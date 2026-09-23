@@ -7,7 +7,7 @@ from typing import Any
 
 import numpy as np
 
-from dvrk_simulator_base.config import RobotConfig
+from dvrk_arm_description import RobotConfig
 from dvrk_simulator_base.types import Pose
 
 

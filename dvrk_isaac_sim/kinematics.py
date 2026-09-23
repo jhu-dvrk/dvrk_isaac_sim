@@ -8,7 +8,7 @@ from typing import Iterable
 
 import numpy as np
 
-from dvrk_simulator_base.config import RobotConfig
+from dvrk_arm_description import RobotConfig
 from dvrk_simulator_base.rotations import quaternion_matrix_xyzw as _quaternion_matrix_xyzw
 from dvrk_simulator_base.types import IKResult, JointState, Pose, Twist
 from .urdf_kinematics import UrdfKinematicChain

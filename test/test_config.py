@@ -3,7 +3,7 @@ from pathlib import Path
 import numpy as np
 from ament_index_python.packages import get_package_share_directory
 
-from dvrk_simulator_base.config import load_robot_config
+from dvrk_arm_description import load_robot_config
 from dvrk_isaac_sim.scene import (
     available_scene_names, available_scene_paths, load_scene,
     load_simulator_config, resolve_scene_path,

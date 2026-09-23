@@ -8,7 +8,7 @@ from typing import Any
 
 import yaml
 
-from dvrk_simulator_base.config import load_robot_document
+from dvrk_arm_description import load_robot_document
 
 
 @dataclass(frozen=True)

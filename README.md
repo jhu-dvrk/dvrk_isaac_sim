@@ -103,7 +103,7 @@ The initial ROS 2 adapter can be run for one configured component:
 ```bash
 ros2 run dvrk_isaac_sim dvrk_isaac_sim_ros \
   --ros-args -r __ns:=/PSM1 \
-  -p robot_config:="$(ros2 pkg prefix dvrk_simulator_base)/share/dvrk_simulator_base/share/arms/PSM1.yaml"
+  -p robot_config:="$(ros2 pkg prefix dvrk_arm_description)/share/dvrk_arm_description/arms/PSM1.yaml"
 ```
 
 ## Tested teleoperation

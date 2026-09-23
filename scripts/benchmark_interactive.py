@@ -30,7 +30,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from dvrk_simulator_base.config import JointConfig, load_robot_config
+from dvrk_arm_description import JointConfig, load_robot_config
 from dvrk_isaac_sim.scene import load_scene, load_simulator_config, resolve_scene_path
 
 

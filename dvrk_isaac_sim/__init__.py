@@ -1,6 +1,6 @@
 """Backend-independent CRTK-style models for dVRK Isaac Sim."""
 
-from dvrk_simulator_base.config import RobotConfig, load_robot_config
+from dvrk_arm_description import RobotConfig, load_robot_config
 from .kinematics import CRTKECM, CRTKPSM, IKResult, JointState, Pose, Twist
 from .ros_interface import CRTKROSComponent
 from .ros_node import CRTKROSNode

@@ -160,7 +160,7 @@ The ECM camera is configured at runtime rather than embedded in the endoscope as
 Robot YAML files are installed by `dvrk_simulator_base`. They support relative
 `include` keys and deterministic deep merging; child mappings override shared
 values while lists are replaced as a whole. Isaac scene profiles reference
-these canonical files with `package://dvrk_simulator_base/share/arms/...` URIs.
+these canonical files with `package://dvrk_arm_description/arms/...` URIs.
 
 
 Scene profiles select the devices launched in a simulation. The initial profiles are:

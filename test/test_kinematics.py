@@ -6,7 +6,7 @@ from ament_index_python.packages import get_package_share_directory
 
 from dvrk_simulator_base.command_validation import (jaw_position_from_message,
                                                      joint_positions_from_message)
-from dvrk_simulator_base.config import load_robot_config
+from dvrk_arm_description import load_robot_config
 from dvrk_isaac_sim.kinematics import CRTKECM, CRTKPSM, Pose
 from dvrk_simulator_base.operating_state import CRTKOperatingState
 from dvrk_simulator_base.cartesian_frames import (

@@ -22,7 +22,7 @@ from dvrk_simulator_base.cartesian_frames import (
     relative_twist as _relative_twist,
     view_pose_from_optical as _view_pose_from_optical,
 )
-from dvrk_simulator_base.config import RobotConfig
+from dvrk_arm_description import RobotConfig
 from dvrk_simulator_base.operating_state import CRTKOperatingState
 from dvrk_simulator_base.ros_qos import (
     transient_local_event_qos,
