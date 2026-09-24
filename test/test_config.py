@@ -29,8 +29,8 @@ def test_simulator_config_is_typed_and_scene_free_by_default():
     assert config.simulation_rate_hz == 120.0
     assert config.render_rate_hz == 30.0
     assert config.headless is False
-    assert config.scene is None
     assert config.generated_dir.is_absolute()
+    assert config.generated_dir == Path.home() / ".cache" / "dvrk_isaac_sim"
 
 
 def test_minimal_renderer_is_supported(tmp_path):

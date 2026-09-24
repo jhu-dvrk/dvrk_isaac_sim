@@ -18,12 +18,9 @@ from dvrk_isaac_sim.urdf_kinematics import write_kinematics_manifest
 require_isaac_sim_build(__file__)
 
 def _default_output() -> Path:
-    for parent in Path(__file__).resolve().parents:
-        if parent.name == "src":
-            return parent.parent / ".generated" / "isaacsim-6.0"
-        if parent.name == "install":
-            return parent.parent / ".generated" / "isaacsim-6.0"
-    return Path.cwd() / ".generated" / "isaacsim-6.0"
+    cache_root = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+    return (cache_root / "dvrk_isaac_sim").resolve()
+
 
 
 DEFAULT_OUTPUT = _default_output()

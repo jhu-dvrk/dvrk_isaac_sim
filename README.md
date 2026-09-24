@@ -16,7 +16,7 @@ hardware I/O.
   `dvrk_simulator_base`, and `rqt_dvrk` when using the monitor.
 
 See [installation.md](docs/installation.md) for the workspace and Isaac Python
-setup.
+setup. (Note: Isaac Sim runs via its bundled Python environment in `ISAAC_SIM_DIR` rather than a separate pip virtualenv bootstrap).
 
 ## Build
 
@@ -101,9 +101,7 @@ forces Isaac headless mode:
 ros2 launch dvrk_isaac_sim open_xr.launch.py rqt:=true
 ```
 
-See [share/open-xr/README.md](share/open-xr/README.md) for OpenXR prerequisites
-and [docs/ros_interface.md](docs/ros_interface.md) for CRTK topics and command
-semantics.
+See [share/open-xr/README.md](share/open-xr/README.md) for OpenXR prerequisites.
 
 ## Testing
 

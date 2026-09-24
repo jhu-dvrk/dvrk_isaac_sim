@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from typing import Any
 
@@ -66,14 +67,10 @@ def load_yaml_mapping(path: str | Path) -> dict[str, Any]:
 
 
 def _default_generated_dir(source: Path) -> Path:
-    """Choose the workspace cache, without placing assets below ``src``."""
-    for parent in source.parents:
-        if parent.name == "src":
-            return parent.parent / ".generated" / "isaacsim-6.0"
-        if parent.name == "install":
-            return parent.parent / ".generated" / "isaacsim-6.0"
-    # A standalone config outside a colcon workspace gets a local sibling cache.
-    return source.parent / ".generated" / "isaacsim-6.0"
+    """Return the user cache directory for Isaac Sim assets."""
+    cache_root = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+    return (cache_root / "dvrk_isaac_sim").resolve()
+
 
 
 def load_simulator_config(path: str | Path) -> SimulatorConfig:

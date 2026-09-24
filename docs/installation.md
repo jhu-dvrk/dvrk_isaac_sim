@@ -212,7 +212,7 @@ as a replacement for Isaac Sim's server-side encoder.
 
 The repository does not commit generated USD files. The source of truth remains
 the virtual Xacro/URDF and meshes from dvrk_model; conversion is an explicit,
-repeatable build step and generated assets are cached under the workspace-root `.generated/isaacsim-6.0/` directory.
+repeatable build step and generated assets are cached under `~/.cache/dvrk_isaac_sim/`.
 
 Source the ROS 2 workspace first so Xacro can resolve dvrk_model, then invoke
 the converter with Isaac Sim's Python:
@@ -227,7 +227,7 @@ the converter with Isaac Sim's Python:
 
 Use --model PSM2, --model PSM3, or --model ECM for the other virtual
 components. The output directory can be overridden with --output-dir; the
-default is the workspace-root `.generated/isaacsim-6.0/` directory. This
+default is the `~/.cache/dvrk_isaac_sim/` directory. This
 keeps conversion separate from the runtime ROS interface and makes it possible to review or regenerate assets
 without committing generated files.
 

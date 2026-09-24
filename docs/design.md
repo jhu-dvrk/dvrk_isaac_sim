@@ -139,12 +139,12 @@ auto      load a valid cache entry or convert when missing/stale
 
 `auto` is the convenient default for researchers. `load` is recommended for reproducible experiments and continuous integration.
 
-Generated assets belong under the colcon workspace root `.generated/isaacsim-6.0`, outside `src`, `build`, and `install`. Generated assets should be cached using a key derived from the source Xacro/URDF and mesh content, instrument or endoscope selection, Isaac Sim version, conversion settings, and asset schema version.
+Generated assets belong under the user cache `~/.cache/dvrk_isaac_sim`, outside `src`, `build`, and `install`. Generated assets should be cached using a key derived from the source Xacro/URDF and mesh content, instrument or endoscope selection, Isaac Sim version, conversion settings, and asset schema version.
 
 A representative cache layout is:
 
 ```text
-.generated/isaacsim-6.0/
+~/.cache/dvrk_isaac_sim/
 ├── PSM1_420006/
 │   └── kinematics.json
 └── ECM_Si_straight/
