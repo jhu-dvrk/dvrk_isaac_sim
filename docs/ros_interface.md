@@ -123,11 +123,11 @@ The current adapter also publishes state topics:
 
 ## GUI monitor and controls
 
-`rqt_crtk/Arm` is an external PyQt5 ROS 2 panel, not an Isaac Kit window. Start
+`rqt_dvrk/Arm` is an external PyQt5 ROS 2 panel, not an Isaac Kit window. Start
 it after the simulator, for example:
 
 ```bash
-rqt --standalone rqt_crtk/Arm --args --arm PSM1
+rqt --standalone rqt_dvrk/Arm --args --arm PSM1
 ```
 
 Each configured PSM or ECM has a panel showing its CRTK operating state, homed status, and measured joints. Revolute joints are displayed in degrees; insertion joints are displayed in millimetres.

@@ -14,5 +14,6 @@ ros2 launch dvrk_isaac_sim open_xr.launch.py
 
 The launch uses the machine-specific `share/isaac_sim.yaml` created during the
 package build with `ISAAC_SIM_DIR` set, and forces headless mode. Override it
-with `config:=/path/to/isaac_sim.yaml` when required. The only other launch
-argument is `console:=...`.
+with `config:=/path/to/isaac_sim.yaml` when required. Use `console:=...` to
+select the dVRK console namespace and `rqt:=true` to launch the Console,
+tabbed dVRK Arms, and diagnostics panels.

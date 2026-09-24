@@ -58,7 +58,7 @@ class _JointMessage:
 
 
 def _component():
-    arms = Path(get_package_share_directory("dvrk_simulator_base")) / "share" / "arms"
+    arms = Path(get_package_share_directory("dvrk_arm_description")) / "arms"
     model = CRTKPSM(load_robot_config(arms / "PSM1.yaml"))
     return CRTKROSComponent(_Node(), model.config, model, _Stamp())
 

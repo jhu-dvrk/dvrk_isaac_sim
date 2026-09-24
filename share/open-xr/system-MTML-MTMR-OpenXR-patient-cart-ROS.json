@@ -26,9 +26,9 @@
       "clutch": {"component": "OpenXR", "interface": "Console/clutch"},
       "camera": {"component": "OpenXR", "interface": "Console/camera"},
       "teleop_PSMs": [
-        {"MTM": "MTMR", "PSM": "PSM1", "clutch": {"component": "OpenXR", "interface": "Console/clutch/MTMR_PSM1"}, "configure_parameter": {"MTM_is_haptic": false, "align_MTM": false, "use_MTM_linear_velocity": false, "use_MTM_angular_velocity": false, "ignore_jaw": false, "start_gripper_threshold": 0.0, "scale": 0.4}},
-        {"MTM": "MTML", "PSM": "PSM2", "clutch": {"component": "OpenXR", "interface": "Console/clutch/MTML_PSM2"}, "configure_parameter": {"MTM_is_haptic": false, "align_MTM": false, "use_MTM_linear_velocity": false, "use_MTM_angular_velocity": false, "ignore_jaw": false, "start_gripper_threshold": 0.0, "scale": 0.4}},
-        {"MTM": "MTML", "PSM": "PSM3", "clutch": {"component": "OpenXR", "interface": "Console/clutch/MTML_PSM3"}, "configure_parameter": {"MTM_is_haptic": false, "align_MTM": false, "use_MTM_linear_velocity": false, "use_MTM_angular_velocity": false, "ignore_jaw": false, "start_gripper_threshold": 0.0, "scale": 0.4}}
+        {"MTM": "MTMR", "PSM": "PSM1", "clutch": {"component": "OpenXR", "interface": "Console/clutch/MTMR"}, "configure_parameter": {"MTM_is_haptic": false, "align_MTM": false, "use_MTM_linear_velocity": false, "use_MTM_angular_velocity": false, "ignore_jaw": false, "start_gripper_threshold": 0.0, "scale": 0.4}},
+        {"MTM": "MTML", "PSM": "PSM2", "clutch": {"component": "OpenXR", "interface": "Console/clutch/MTML"}, "configure_parameter": {"MTM_is_haptic": false, "align_MTM": false, "use_MTM_linear_velocity": false, "use_MTM_angular_velocity": false, "ignore_jaw": false, "start_gripper_threshold": 0.0, "scale": 0.4}},
+        {"MTM": "MTML", "PSM": "PSM3", "clutch": {"component": "OpenXR", "interface": "Console/clutch/MTML"}, "configure_parameter": {"MTM_is_haptic": false, "align_MTM": false, "use_MTM_linear_velocity": false, "use_MTM_angular_velocity": false, "ignore_jaw": false, "start_gripper_threshold": 0.0, "scale": 0.4}}
       ],
       "teleop_ECMs": [
         {"MTML": "MTML", "MTMR": "MTMR", "ECM": "ECM", "configure_parameter": {"MTM_is_haptic": false, "check_MTMs_workspace": false, "haptic_feedback_ratio": 0.0}}

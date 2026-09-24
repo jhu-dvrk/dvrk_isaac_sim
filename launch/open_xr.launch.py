@@ -20,6 +20,8 @@ def generate_launch_description():
         launch_arguments={
             "config": LaunchConfiguration("config"),
             "scene": "ECM_PSM1_PSM2_PSM3_stereo_rtsp.yaml",
+            "rqt": LaunchConfiguration("rqt"),
+            "rqt_console": "true",
         }.items(),
     )
     dvrk_system = Node(
@@ -45,7 +47,12 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "console", default_value="console", description="dVRK console ROS namespace",
         ),
+        DeclareLaunchArgument(
+            "rqt", default_value="false",
+            description="start a dockable dVRK and CRTK rqt monitor",
+        ),
         SetEnvironmentVariable("DVRK_SIMULATOR_FORCE_HEADLESS", "true"),
+        SetEnvironmentVariable("DVRK_RQT_CONSOLE", LaunchConfiguration("console")),
         simulator,
         dvrk_system,
         start_system,

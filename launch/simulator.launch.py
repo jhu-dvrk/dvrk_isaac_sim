@@ -9,6 +9,10 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, ExecuteProcess, LogInfo, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
 from dvrk_isaac_sim.scene import load_scene, load_simulator_config, resolve_scene_path
+from dvrk_simulator_base.rqt_perspective import (
+    existing_ament_prefix_path,
+    write_monitor_perspective,
+)
 
 
 
@@ -68,17 +72,33 @@ def _start_sim(context):
         "RMW_IMPLEMENTATION": simulator_config.rmw_implementation,
         "PYTHONUNBUFFERED": "1",
     }
+    rqt_actions = []
+    if LaunchConfiguration("rqt").perform(context).lower() == "true":
+        arms = [robot.name for robot in scene.robots]
+        perspective = write_monitor_perspective(
+            generated_dir / "rqt" / "monitor.perspective",
+            arms,
+            include_console=LaunchConfiguration("rqt_console").perform(context).lower() == "true",
+        )
+        rqt_environment = {"DVRK_RQT_ARMS": ",".join(arms)}
+        if prefix_path := existing_ament_prefix_path():
+            rqt_environment["AMENT_PREFIX_PATH"] = prefix_path
+        rqt_actions.append(ExecuteProcess(
+            cmd=["rqt", "--perspective-file", str(perspective)], output="screen",
+            additional_env=rqt_environment,
+        ))
+
     if conversion_commands:
         shell_command = " && ".join([shlex.join(item) for item in conversion_commands] + [shlex.join(command)])
         return [
             LogInfo(msg=f"Generating {len(conversion_commands)} missing USD/URDF asset set(s) from dvrk_model"),
             ExecuteProcess(cmd=["bash", "-c", shell_command], cwd=str(isaac_dir),
                            additional_env=environment, output="screen"),
-        ]
+        ] + rqt_actions
     return [
         LogInfo(msg=f"Starting Isaac Sim scene {scene.name}"),
         ExecuteProcess(cmd=command, cwd=str(isaac_dir), additional_env=environment, output="screen"),
-    ]
+    ] + rqt_actions
 
 
 def generate_launch_description():
@@ -91,5 +111,13 @@ def generate_launch_description():
         DeclareLaunchArgument("config", default_value=default_config,
                               description="Saved simulator config YAML"),
         DeclareLaunchArgument("scene", description="Scene YAML path or filename under share/scenes"),
+        DeclareLaunchArgument(
+            "rqt", default_value="false",
+            description="start a dockable dVRK rqt monitor",
+        ),
+        DeclareLaunchArgument(
+            "rqt_console", default_value="false",
+            description="include the dVRK Console widget in the rqt monitor",
+        ),
         OpaqueFunction(function=_start_sim),
     ])
