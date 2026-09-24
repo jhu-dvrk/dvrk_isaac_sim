@@ -120,10 +120,31 @@ def load_simulator_config(path: str | Path) -> SimulatorConfig:
     )
 
 
+def _base_scenes_directory() -> Path | None:
+    try:
+        from ament_index_python.packages import get_package_share_directory
+
+        share = Path(get_package_share_directory("dvrk_simulator_base")) / "share" / "scenes"
+        if share.is_dir():
+            return share
+    except Exception:
+        pass
+    return None
+
+
 def available_scene_paths(config_path: str | Path) -> tuple[Path, ...]:
-    """Return scene YAMLs next to a simulator config file."""
+    """Return scene YAMLs next to a simulator config file and in dvrk_simulator_base."""
+    paths = []
     directory = Path(config_path).expanduser().resolve().parent / "scenes"
-    return tuple(sorted(directory.glob("*.yaml")))
+    if directory.is_dir():
+        paths.extend(directory.glob("*.yaml"))
+    base_dir = _base_scenes_directory()
+    if base_dir is not None:
+        seen = {p.name for p in paths}
+        for p in base_dir.glob("*.yaml"):
+            if p.name not in seen:
+                paths.append(p)
+    return tuple(sorted(paths, key=lambda p: p.name))
 
 
 def available_scene_names(config_path: str | Path) -> tuple[str, ...]:
@@ -133,7 +154,8 @@ def available_scene_names(config_path: str | Path) -> tuple[str, ...]:
 def resolve_scene_path(config_path: str | Path, selection: str | Path | None) -> Path:
     """Resolve a scene filename, relative path, or absolute path.
 
-    Bare filenames are searched below the config file's ``scenes`` directory.
+    Bare filenames are searched below the config file's ``scenes`` directory
+    or dvrk_simulator_base shared scenes.
     """
     config = Path(config_path).expanduser().resolve()
     if selection in (None, ""):
@@ -151,6 +173,14 @@ def resolve_scene_path(config_path: str | Path, selection: str | Path | None) ->
             resolved = (config.parent / "scenes" / selected).resolve()
         if not resolved.suffix:
             resolved = resolved.with_suffix(".yaml")
+        if not resolved.is_file() and selected.parent == Path("."):
+            base_dir = _base_scenes_directory()
+            if base_dir is not None:
+                candidate = (base_dir / selected).resolve()
+                if not candidate.suffix:
+                    candidate = candidate.with_suffix(".yaml")
+                if candidate.is_file():
+                    resolved = candidate
     if not resolved.is_file():
         names = "\n  ".join(available_scene_names(config)) or "(none)"
         raise FileNotFoundError(
@@ -187,6 +217,15 @@ def _robot_config_path(scene_path: Path, configured: Any) -> Path:
     if path.is_absolute():
         return path.resolve()
 
+    try:
+        from ament_index_python.packages import get_package_share_directory
+
+        arm_desc = (Path(get_package_share_directory("dvrk_arm_description")) / "arms" / path).resolve()
+        if arm_desc.is_file():
+            return arm_desc
+    except Exception:
+        pass
+
     # A standalone scene may provide a custom robot definition next to its
     # package root.  Package-owned robot definitions use package:// URIs.
     scene_relative = (scene_path.parent.parent.parent / path).resolve()
@@ -221,51 +260,53 @@ def load_scene(scene_path: str | Path) -> SceneConfig:
     if not isinstance(frames, dict):
         raise ValueError(f"{source}: scene.frames must be a mapping")
 
+    has_camera = "camera" in scene
     camera_document = scene.get("camera", {}) or {}
     if not isinstance(camera_document, dict):
         raise ValueError(f"{source}: scene.camera must be a mapping")
     camera = SceneCamera(
-        mode=str(camera_document.get("mode", "mono")),
+        mode=str(camera_document.get("mode", "mono" if has_camera else "off")),
         owner=str(camera_document.get("owner", "ECM")),
         settings=dict(camera_document),
     )
     if camera.mode not in {"off", "mono", "stereo"}:
         raise ValueError(f"{source}: camera.mode must be off, mono, or stereo")
-    if "transport" in camera_document:
-        raise ValueError(f"{source}: camera.transport was replaced by camera.transports")
-    camera_transports = camera_document.get("transports", ["ros_raw"])
-    if (not isinstance(camera_transports, list)
-            or not all(isinstance(item, str) for item in camera_transports)):
-        raise ValueError(f"{source}: camera.transports must be a list of strings")
-    if len(set(camera_transports)) != len(camera_transports):
-        raise ValueError(f"{source}: camera.transports must not contain duplicates")
-    unsupported_transports = set(camera_transports) - {"ros_raw", "ros_compressed", "rtsp"}
-    if unsupported_transports:
-        raise ValueError(
-            f"{source}: unsupported camera transport(s): {', '.join(sorted(unsupported_transports))}"
-        )
-    if "ros_compressed" in camera_transports:
-        compressed_document = camera_document.get("ros_compressed", {}) or {}
-        if not isinstance(compressed_document, dict):
-            raise ValueError(f"{source}: camera.ros_compressed must be a mapping")
-        quality = int(compressed_document.get("quality", 85))
-        if not 1 <= quality <= 100:
-            raise ValueError(f"{source}: camera.ros_compressed.quality must be between 1 and 100")
-    if "rtsp" in camera_transports:
-        rtsp_document = camera_document.get("rtsp", {}) or {}
-        if not isinstance(rtsp_document, dict):
-            raise ValueError(f"{source}: camera.rtsp must be a mapping")
-        port = int(rtsp_document.get("port", 8554))
-        mount_path = str(rtsp_document.get("mount_path", "/ECM"))
-        encoding = str(rtsp_document.get("encoding", "h264")).lower()
-        if not 1 <= port <= 65535:
-            raise ValueError(f"{source}: camera.rtsp.port must be between 1 and 65535")
-        if not mount_path.startswith("/"):
-            raise ValueError(f"{source}: camera.rtsp.mount_path must start with '/'")
-        if encoding not in {"h264", "raw"}:
-            raise ValueError(f"{source}: camera.rtsp.encoding must be h264 or raw")
-    if camera.owner != "ECM":
-        raise ValueError(f"{source}: only ECM is supported as the camera owner")
+    if camera.mode != "off":
+        if "transport" in camera_document:
+            raise ValueError(f"{source}: camera.transport was replaced by camera.transports")
+        camera_transports = camera_document.get("transports", ["ros_raw"])
+        if (not isinstance(camera_transports, list)
+                or not all(isinstance(item, str) for item in camera_transports)):
+            raise ValueError(f"{source}: camera.transports must be a list of strings")
+        if len(set(camera_transports)) != len(camera_transports):
+            raise ValueError(f"{source}: camera.transports must not contain duplicates")
+        unsupported_transports = set(camera_transports) - {"ros_raw", "ros_compressed", "rtsp", "unixfd"}
+        if unsupported_transports:
+            raise ValueError(
+                f"{source}: unsupported camera transport(s): {', '.join(sorted(unsupported_transports))}"
+            )
+        if "ros_compressed" in camera_transports:
+            compressed_document = camera_document.get("ros_compressed", {}) or {}
+            if not isinstance(compressed_document, dict):
+                raise ValueError(f"{source}: camera.ros_compressed must be a mapping")
+            quality = int(compressed_document.get("quality", 85))
+            if not 1 <= quality <= 100:
+                raise ValueError(f"{source}: camera.ros_compressed.quality must be between 1 and 100")
+        if "rtsp" in camera_transports:
+            rtsp_document = camera_document.get("rtsp", {}) or {}
+            if not isinstance(rtsp_document, dict):
+                raise ValueError(f"{source}: camera.rtsp must be a mapping")
+            port = int(rtsp_document.get("port", 8554))
+            mount_path = str(rtsp_document.get("mount_path", "/ECM"))
+            encoding = str(rtsp_document.get("encoding", "h264")).lower()
+            if not 1 <= port <= 65535:
+                raise ValueError(f"{source}: camera.rtsp.port must be between 1 and 65535")
+            if not mount_path.startswith("/"):
+                raise ValueError(f"{source}: camera.rtsp.mount_path must start with '/'")
+            if encoding not in {"h264", "raw"}:
+                raise ValueError(f"{source}: camera.rtsp.encoding must be h264 or raw")
+        if camera.owner != "ECM":
+            raise ValueError(f"{source}: only ECM is supported as the camera owner")
 
     entries = []
     names = set()

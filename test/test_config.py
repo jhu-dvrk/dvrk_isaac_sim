@@ -44,9 +44,12 @@ def test_shipped_scenes_use_expected_camera_outputs_with_close_near_clip():
     config_path = ROOT / "share" / "isaac_sim.yaml.example"
 
     for scene_path in available_scene_paths(config_path):
-        camera = load_scene(scene_path).camera.as_dict()
+        scene = load_scene(scene_path)
+        if scene.camera.mode == "off":
+            continue
+        camera = scene.camera.as_dict()
 
-        assert camera["transports"] == ["rtsp"]
+        assert "rtsp" in camera["transports"]
         assert camera["rtsp"]["encoding"] == "raw"
         assert camera["rtsp"]["mount_path"] == "/ECM"
         assert camera["near_clip_m"] == 0.005
