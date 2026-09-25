@@ -214,11 +214,12 @@ def write_kinematics_manifest(urdf_path: str | Path, output_path: str | Path, mo
     collision_items = _collision_items(root, link_paths, visual_root)
 
     manifest = {
-        "format": 4,
+        "format": 5,
         "model": model,
         "tip_link": tip,
         "root_link": current,
         "joints": chain,
+        "all_joints": joints,
         "active_joints": active,
         "visual": {"root": visual_root, "joints": visual_joints},
         "collision": {
@@ -239,8 +240,10 @@ class UrdfKinematicChain:
         self.manifest_path = Path(manifest_path)
         manifest = json.loads(self.manifest_path.read_text(encoding="utf-8"))
         self.joints = tuple(manifest["joints"])
+        self.all_joints = tuple(manifest.get("all_joints", self.joints))
         self.active_joints = tuple(manifest["active_joints"])
         self.tip_link = str(manifest.get("tip_link", ""))
+        self.root_link = str(manifest.get("root_link", ""))
 
     def forward(self, q: np.ndarray, joint_names: tuple[str, ...]) -> tuple[np.ndarray, np.ndarray]:
         if q.shape != (len(joint_names),):
@@ -279,6 +282,45 @@ class UrdfKinematicChain:
 
     def forward_all_links(self, q: np.ndarray, joint_names: tuple[str, ...]) -> dict[str, np.ndarray]:
         """Return the world transform for each joint child link in the chain."""
+        if q.shape != (len(joint_names),):
+            raise ValueError("joint position has the wrong size")
+        values = dict(zip(joint_names, q))
+        transforms = {self.root_link: np.eye(4)}
+        poses: dict[str, np.ndarray] = {}
+        pending = list(self.all_joints)
+        while pending:
+            next_pending = []
+            progressed = False
+            for joint in pending:
+                parent = joint["parent"]
+                if parent not in transforms:
+                    next_pending.append(joint)
+                    continue
+                transform = transforms[parent] @ _transform(_rpy_matrix(*joint["origin_rpy"]), joint["origin_xyz"])
+                joint_type = joint["type"]
+                if joint_type in ("revolute", "continuous", "prismatic"):
+                    axis = np.asarray(joint["axis"], dtype=float)
+                    if np.linalg.norm(axis) == 0.0:
+                        axis = np.array([0.0, 0.0, 1.0])
+                    mimic = joint["mimic"]
+                    if mimic is not None:
+                        angle = values.get(mimic["joint"], 0.0) * mimic["multiplier"] + mimic["offset"]
+                    else:
+                        angle = values.get(joint["name"], 0.0)
+                    if joint_type in ("revolute", "continuous"):
+                        transform = transform @ _transform(_rotation(axis, angle), [0.0, 0.0, 0.0])
+                    else:
+                        transform = transform @ _transform(np.eye(3), (axis * angle).tolist())
+                poses[joint["child"]] = transform.copy()
+                transforms[joint["child"]] = transform
+                progressed = True
+            if not progressed:
+                break
+            pending = next_pending
+        return poses
+
+    def forward_all_chain_links(self, q: np.ndarray, joint_names: tuple[str, ...]) -> dict[str, np.ndarray]:
+        """Return the world transform for each joint child link in the tip chain."""
         if q.shape != (len(joint_names),):
             raise ValueError("joint position has the wrong size")
         values = dict(zip(joint_names, q))

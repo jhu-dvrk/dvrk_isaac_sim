@@ -239,6 +239,28 @@ By default, the converter removes importer-authored Physics schemas because
 the project uses kinematic motion and does not need PhysX rigid bodies. Use
 --keep-physics only when experimenting with dynamic simulation.
 
+To verify collision mesh appearance, launch the converted asset in Isaac Sim
+with a GUI and inspect the imported collision geometry under
+`/World/<component>/Geometry/world` together with the flattened runtime bodies
+under `/World/<component>/PhysicsLinks`. The generated collision meshes should
+visually match the corresponding instrument parts and move with the same joint
+state as the visual model.
+
+To check the collision mesh coordinate frames, run the simulator with startup
+frame diagnostics enabled. It prints each source link, the matched nested
+collision candidate, the flattened collision frame axes, and the
+nested-vs-flattened position and rotation error:
+
+```bash
+ros2 launch dvrk_isaac_sim simulator.launch.py \
+  scene:=ECM_PSM1_PSM2_PSM3_mono.yaml \
+  report_collision_frames:=true
+```
+
+The lower-level `scripts/debug_collision_offsets.py` script is still useful
+from Isaac Sim's Script Editor or another in-process stage diagnostic when you
+want to inspect one component and one generated `kinematics.json` directly.
+
 ## Isaac Sim ROS 2 simulation
 
 The simulator is configured from `share/isaac_sim.yaml`. This file is installed
@@ -348,4 +370,3 @@ ros2 topic pub --once /PSM1/move_jp sensor_msgs/msg/JointState \
 
 The corresponding `measured_js` and `measured_cp` values should move over
 subsequent simulation steps.
-

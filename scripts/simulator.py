@@ -64,6 +64,16 @@ def _arguments() -> argparse.Namespace:
                         help="optionally overlay an environment YAML onto the selected scene")
     parser.add_argument("--run-crtk-integration-test", action="store_true",
                         help="run the test-only CRTK integration test")
+    parser.add_argument(
+        "--report-collision-frames",
+        action="store_true",
+        help="print imported-vs-flattened collision mesh frame diagnostics at startup",
+    )
+    parser.add_argument(
+        "--kinematic-contact-guard",
+        action="store_true",
+        help="conservatively clamp kinematic PSM motion before collision meshes sweep through scene props",
+    )
     args = parser.parse_args()
 
     config_path = args.config.expanduser().resolve()
@@ -486,6 +496,7 @@ def main() -> int:
 
         from dvrk_isaac_sim.config import load_robot_config
         from dvrk_isaac_sim.kinematics import CRTKECM, CRTKPSM
+        from dvrk_isaac_sim.kinematic_contact_guard import KinematicContactGuard
         from dvrk_isaac_sim.ros_interface import CRTKROSComponent
         from dvrk_isaac_sim.usd_physics_links import PhysicsLinkSync
         from dvrk_isaac_sim.usd_visual import CRTKUSDVisual
@@ -524,6 +535,25 @@ def main() -> int:
                     table_surface_z,
                     margin=args.table_contact_clearance_m,
                 )
+            if (
+                args.kinematic_contact_guard
+                and config.type == "PSM"
+                and config.kinematics_manifest is not None
+                and model._urdf_chain is not None
+            ):
+                guard = KinematicContactGuard(
+                    config.kinematics_manifest,
+                    model._urdf_chain,
+                    args.scene_model.props,
+                    margin=args.table_contact_clearance_m,
+                )
+                if guard.enabled:
+                    model.set_motion_guard(guard.clamp)
+                    print(
+                        f"{config.name}: kinematic contact guard enabled "
+                        f"for {len(args.scene_model.props)} scene prop(s)",
+                        flush=True,
+                    )
             import omni.usd
 
             stage = omni.usd.get_context().get_stage()
@@ -583,14 +613,32 @@ def main() -> int:
             component.model.prepare_startup_move()
         with Sdf.ChangeBlock():
             for _, component, visual, _ in nodes:
+                measured = component.model.measured_js()
                 if visual is not None:
-                    measured = component.model.measured_js()
                     visual.update(
                         measured.names, measured.position,
                         component.jaw_position,
                     )
+                if component.config.name in physics_links:
+                    physics_links[component.config.name].update(
+                        measured.names,
+                        measured.position,
+                        component.jaw_position,
+                    )
         if fabric_visual is not None:
             fabric_visual.flush()
+
+        if args.report_collision_frames:
+            import omni.usd
+            from dvrk_isaac_sim.collision_diagnostics import report_collision_frames
+
+            stage = omni.usd.get_context().get_stage()
+            for _, component, _, _ in nodes:
+                if component.config.name not in physics_links:
+                    continue
+                manifest = component.config.kinematics_manifest
+                if manifest is not None:
+                    report_collision_frames(stage, component.config.name, manifest)
 
         if not args.headless:
             from dvrk_isaac_sim.isaac_ui import IsaacCRTKWindow

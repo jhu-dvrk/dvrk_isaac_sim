@@ -67,9 +67,12 @@ def _start_sim(context):
                 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
                 manifest = None
-            if (isinstance(manifest, dict) and manifest.get("format", 0) >= 3
-                    and isinstance(manifest.get("visual"), dict)):
-                return
+            if isinstance(manifest, dict) and manifest.get("format", 0) >= 5 and isinstance(manifest.get("visual"), dict):
+                if robot.type != "PSM":
+                    return
+                collision = manifest.get("collision")
+                if isinstance(collision, dict) and len(collision.get("items", [])) >= 30:
+                    return
             # Older manifests lack the USD transform-order metadata required
             # to preserve joints whose visual offsets were folded by Isaac.
         command = [str(isaac_python), str(converter), "--model", robot.name,
@@ -97,6 +100,10 @@ def _start_sim(context):
         command.extend(["--duration", duration])
     if LaunchConfiguration("run_crtk_integration_test").perform(context).lower() in {"true", "1", "yes"}:
         command.append("--run-crtk-integration-test")
+    if LaunchConfiguration("report_collision_frames").perform(context).lower() in {"true", "1", "yes"}:
+        command.append("--report-collision-frames")
+    if LaunchConfiguration("kinematic_contact_guard").perform(context).lower() in {"true", "1", "yes"}:
+        command.append("--kinematic-contact-guard")
 
     ros_distro = LaunchConfiguration("ros_distro").perform(context) or simulator_config.ros_distro
     rmw_implementation = LaunchConfiguration("rmw_implementation").perform(context) or simulator_config.rmw_implementation
@@ -141,6 +148,10 @@ def generate_launch_description():
                               description="Optional duration override in seconds"),
         DeclareLaunchArgument("run_crtk_integration_test", default_value="false",
                               description="Run the test-only CRTK integration test"),
+        DeclareLaunchArgument("report_collision_frames", default_value="false",
+                              description="Print collision mesh coordinate-frame diagnostics at startup"),
+        DeclareLaunchArgument("kinematic_contact_guard", default_value="false",
+                              description="Clamp fast kinematic PSM motion against scene prop AABBs"),
         DeclareLaunchArgument("ros_distro", default_value=""),
         DeclareLaunchArgument("rmw_implementation", default_value=""),
         OpaqueFunction(function=_start_sim),

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
-from typing import Iterable
+from typing import Callable, Iterable
 
 import numpy as np
 
@@ -107,6 +107,7 @@ class CRTKComponent:
         self._cached_q: np.ndarray | None = None
         self._cached_transform: np.ndarray | None = None
         self._cached_jacobian: np.ndarray | None = None
+        self._motion_guard: Callable[[tuple[str, ...], np.ndarray, np.ndarray], np.ndarray] | None = None
         self._urdf_chain = (UrdfKinematicChain(config.kinematics_manifest)
                             if config.kinematics_manifest is not None
                             and config.kinematics_manifest.is_file() else None)
@@ -190,6 +191,13 @@ class CRTKComponent:
         """Return the current move/servo joint goal using CRTK naming."""
         return JointState(self._joint_names, self._target_q.copy(), np.zeros_like(self._target_q))
 
+    def set_motion_guard(
+        self,
+        guard: Callable[[tuple[str, ...], np.ndarray, np.ndarray], np.ndarray] | None,
+    ) -> None:
+        """Install an optional joint-step clamp used before committing motion."""
+        self._motion_guard = guard
+
     def is_busy(self) -> bool:
         return bool(np.any(np.abs(self._q - self._target_q) > 1e-9))
 
@@ -223,8 +231,14 @@ class CRTKComponent:
         delta = self._target_q - self._q
         max_delta = self._velocity_limits * dt
         applied = np.clip(delta, -max_delta, max_delta)
+        proposed = self._q + applied
+        if self._motion_guard is not None and np.any(np.abs(applied) > 0.0):
+            proposed = self._validate_joint_position(
+                self._motion_guard(self._joint_names, self._q.copy(), proposed.copy())
+            )
+            applied = proposed - self._q
         self._qdot = applied / dt if dt > 0.0 else np.zeros_like(applied)
-        self._q += applied
+        self._q = proposed
         if np.allclose(self._q, self._target_q):
             self._qdot[:] = 0.0
 

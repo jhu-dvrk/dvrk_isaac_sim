@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+import xml.etree.ElementTree as ET
 
 from _isaac_sim_build import require_isaac_sim_build
 from dvrk_isaac_sim.urdf_kinematics import write_kinematics_manifest
@@ -54,6 +55,10 @@ def _model_root() -> Path:
         if (root / "urdf").is_dir():
             return root
         raise RuntimeError(f"DVRK_MODEL_PATH does not contain an urdf directory: {root}")
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / "dvrk_model"
+        if (candidate / "urdf").is_dir():
+            return candidate
     try:
         prefix = subprocess.check_output(
             ["ros2", "pkg", "prefix", "dvrk_model"], text=True, stderr=subprocess.STDOUT
@@ -65,6 +70,117 @@ def _model_root() -> Path:
         if (candidate / "urdf").is_dir():
             return candidate
     raise RuntimeError(f"Could not locate dvrk_model/urdf below ROS prefix: {prefix_path}")
+
+
+def _package_mesh_path(model_root: Path, filename: str) -> Path | None:
+    prefix = "package://dvrk_model/"
+    if not filename.startswith(prefix):
+        return None
+    return model_root / filename[len(prefix):]
+
+
+def _package_mesh_name(model_root: Path, mesh_path: Path) -> str:
+    return "package://dvrk_model/" + mesh_path.resolve().relative_to(model_root.resolve()).as_posix()
+
+
+def _geometric_collision_mesh(model_root: Path, filename: str) -> str | None:
+    mesh_path = _package_mesh_path(model_root, filename)
+    if mesh_path is None:
+        return None
+    if "_collision_geometric" in mesh_path.stem:
+        return filename if mesh_path.is_file() else None
+    if "_collision" not in mesh_path.stem:
+        return None
+
+    geometric_stem = mesh_path.stem.replace("_collision", "_collision_geometric", 1)
+    candidates = [
+        mesh_path.with_name(geometric_stem + mesh_path.suffix),
+        mesh_path.with_name(geometric_stem + ".obj"),
+        mesh_path.with_name(geometric_stem + ".stl"),
+        mesh_path.with_name(geometric_stem + ".STL"),
+    ]
+    for candidate in dict.fromkeys(candidates):
+        if candidate.is_file():
+            return _package_mesh_name(model_root, candidate)
+    return None
+
+
+def _origin(element: ET.Element) -> ET.Element:
+    origin = element.find("origin")
+    if origin is None:
+        origin = ET.Element("origin")
+        element.insert(0, origin)
+    return origin
+
+
+def _mesh(element: ET.Element) -> ET.Element | None:
+    geometry = element.find("geometry")
+    if geometry is None:
+        return None
+    return geometry.find("mesh")
+
+
+def _first_visual_mesh(link: ET.Element) -> tuple[ET.Element, ET.Element] | None:
+    for visual in link.findall("visual"):
+        mesh = _mesh(visual)
+        if mesh is not None and mesh.attrib.get("filename"):
+            return visual, mesh
+    return None
+
+
+def _copy_visual_mesh_frame(
+    visual: ET.Element,
+    visual_mesh: ET.Element,
+    collision: ET.Element,
+    collision_mesh: ET.Element,
+) -> None:
+    visual_origin = visual.find("origin")
+    collision_origin = _origin(collision)
+    for attribute in ("xyz", "rpy"):
+        if visual_origin is not None and attribute in visual_origin.attrib:
+            collision_origin.set(attribute, visual_origin.attrib[attribute])
+        elif attribute in collision_origin.attrib:
+            del collision_origin.attrib[attribute]
+    if "scale" in visual_mesh.attrib:
+        collision_mesh.set("scale", visual_mesh.attrib["scale"])
+    elif "scale" in collision_mesh.attrib:
+        del collision_mesh.attrib["scale"]
+
+
+def _normalize_geometric_collision_meshes(urdf_path: Path, model_root: Path) -> int:
+    """Use geometric collision meshes in the same frame as their visual mesh."""
+    tree = ET.parse(urdf_path)
+    root = tree.getroot()
+    updated = 0
+    for link in root.findall("link"):
+        visual = _first_visual_mesh(link)
+        if visual is None:
+            continue
+        visual_element, visual_mesh = visual
+        for collision in link.findall("collision"):
+            collision_mesh = _mesh(collision)
+            if collision_mesh is None:
+                continue
+            filename = collision_mesh.attrib.get("filename", "")
+            geometric = _geometric_collision_mesh(model_root, filename)
+            if geometric is None:
+                continue
+            if geometric != filename:
+                collision_mesh.set("filename", geometric)
+                updated += 1
+            before = (
+                collision.find("origin").attrib.copy() if collision.find("origin") is not None else {},
+                collision_mesh.attrib.copy(),
+            )
+            _copy_visual_mesh_frame(visual_element, visual_mesh, collision, collision_mesh)
+            after = (
+                collision.find("origin").attrib.copy() if collision.find("origin") is not None else {},
+                collision_mesh.attrib.copy(),
+            )
+            updated += int(after != before)
+    if updated:
+        tree.write(urdf_path, encoding="utf-8", xml_declaration=True)
+    return updated
 
 
 def _expand_xacro(args: argparse.Namespace, xacro_path: Path, output: Path) -> None:
@@ -151,6 +267,9 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="dvrk_isaac_sim_") as temporary:
         urdf_path = Path(temporary) / f"{args.model}.urdf"
         _expand_xacro(args, xacro_path, urdf_path)
+        normalized = _normalize_geometric_collision_meshes(urdf_path, root)
+        if normalized:
+            print(f"Normalized {normalized} geometric collision mesh references/frames", flush=True)
         manifest_path = write_kinematics_manifest(urdf_path, asset_dir / "kinematics.json", args.model)
         print(f"Generated kinematics manifest {manifest_path}", flush=True)
         from isaacsim import SimulationApp

@@ -5,6 +5,7 @@ import pytest
 from dvrk_isaac_sim.urdf_kinematics import _rotation, _transform
 from dvrk_isaac_sim.usd_physics_links import (
     _candidate_collision_prim,
+    _collision_body_name,
     _relative_offset_from_stage_transforms,
     _require_collision_candidate,
 )
@@ -132,6 +133,47 @@ def test_candidate_collision_prim_skips_blocked_descendant_link_subtrees():
     assert result is prims[1]
 
 
+def test_candidate_collision_prim_matches_imported_collision_xform_piece():
+    prims = [
+        _FakePrim("tip_006_1", "/World/jaw_1/tip_006_1", is_gprim=False),
+        _FakePrim("jaw_1_collision_00", "/World/jaw_1/jaw_1_collision_00", is_gprim=False),
+        _FakePrim("jaw_1_collision_01", "/World/jaw_1/jaw_1_collision_01", is_gprim=False),
+    ]
+    root = _FakeRoot("/World/jaw_1", prims)
+    item = {
+        "name": "jaw_1_collision_01",
+        "source_link": "PSM1_jaw_1_link",
+        "geometry": {"filename": "package://dvrk_model/meshes/instruments/tip/006/collision_hulls/tip_006_1_convex_hull_01.obj"},
+    }
+
+    result = _candidate_collision_prim(root, _FakeUsd, _FakeUsdGeom, item)
+
+    assert result is prims[2]
+
+
+def test_candidate_collision_prim_matches_imported_filename_stem_xform():
+    prims = [
+        _FakePrim("roll_4670", "/World/roll/roll_4670", is_gprim=False),
+        _FakePrim(
+            "roll_4670_collision_convex_cylinder",
+            "/World/roll/roll_4670_collision_convex_cylinder",
+            is_gprim=False,
+        ),
+    ]
+    root = _FakeRoot("/World/roll", prims)
+    item = {
+        "name": "PSM1_roll_link_collision_0",
+        "source_link": "PSM1_roll_link",
+        "geometry": {
+            "filename": "package://dvrk_model/meshes/instruments/roll/4670/roll_4670_collision_convex_cylinder.obj"
+        },
+    }
+
+    result = _candidate_collision_prim(root, _FakeUsd, _FakeUsdGeom, item)
+
+    assert result is prims[1]
+
+
 def test_require_collision_candidate_rejects_unmapped_psm_link():
     with pytest.raises(RuntimeError, match="PSM1_pitch_link") as error:
         _require_collision_candidate(
@@ -141,3 +183,15 @@ def test_require_collision_candidate_rejects_unmapped_psm_link():
         )
 
     assert "cannot create flattened collision body" in str(error.value)
+
+
+def test_collision_body_name_preserves_collision_item_identity():
+    assert (
+        _collision_body_name({"name": "jaw_1_collision_3", "source_link": "PSM1_jaw_1_link"}, 7)
+        == "jaw_1_collision_3"
+    )
+    assert (
+        _collision_body_name({"name": "jaw 1 collision/3", "source_link": "PSM1_jaw_1_link"}, 7)
+        == "jaw_1_collision_3"
+    )
+    assert _collision_body_name({"source_link": "PSM1_jaw_1_link"}, 7) == "PSM1_jaw_1_link_collision_7"

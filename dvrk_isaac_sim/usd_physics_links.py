@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import numpy as np
@@ -25,15 +26,40 @@ def _collision_name_hints(item: dict) -> tuple[str, ...]:
     item_name = str(item.get("name", "")).strip().lower()
     if item_name:
         hints.append(item_name)
-    source_link = str(item.get("source_link", "")).strip().lower()
-    if source_link:
-        hints.append(source_link)
     geometry = item.get("geometry")
     if isinstance(geometry, dict):
         filename = str(geometry.get("filename", "")).strip().lower()
         if filename:
             hints.append(Path(filename).stem)
     return tuple(dict.fromkeys(hint for hint in hints if hint))
+
+
+def _collision_body_name(item: dict, index: int) -> str:
+    link = str(item.get("source_link", "")).strip()
+    name = str(item.get("name", "")).strip()
+    base = name or f"{link}_collision_{index}"
+    base = re.sub(r"[^A-Za-z0-9_]+", "_", base).strip("_")
+    return base or f"collision_{index}"
+
+
+def _matches_collision_hint(prim, hints: tuple[str, ...]) -> bool:
+    if not hints:
+        return False
+    name = prim.GetName().lower()
+    path = str(prim.GetPath()).lower()
+    return any(hint in name or hint in path for hint in hints)
+
+
+def _has_collision_identity(prim) -> bool:
+    name = prim.GetName().lower()
+    path = str(prim.GetPath()).lower()
+    if "collision" in name or "collision" in path:
+        return True
+    purpose = prim.GetAttribute("purpose")
+    if purpose.IsValid() and purpose.HasAuthoredValueOpinion() and str(purpose.Get()).lower() == "guide":
+        return True
+    approximation = prim.GetAttribute("physics:approximation")
+    return approximation.IsValid() and approximation.HasAuthoredValueOpinion()
 
 
 def _candidate_collision_prim(prim, Usd, UsdGeom, item: dict, blocked_paths: tuple[str, ...] = ()):
@@ -48,27 +74,16 @@ def _candidate_collision_prim(prim, Usd, UsdGeom, item: dict, blocked_paths: tup
         if not child.IsActive():
             continue
         depth = child_path.count("/") - source_path.count("/")
-        if child.IsA(UsdGeom.Gprim):
+        hint_matched = _matches_collision_hint(child, hints)
+        collision_like = _has_collision_identity(child)
+        if collision_like:
             generic.append((depth, child_path, child))
-            if hints and any(hint in child.GetName().lower() or hint in child_path.lower() for hint in hints):
+            if hint_matched:
                 named.append((depth, child_path, child))
                 continue
-        name = child.GetName().lower()
-        if name.endswith("_collision"):
+        if child.IsA(UsdGeom.Gprim) and not collision_like:
             generic.append((depth, child_path, child))
-            if hints and any(hint in name or hint in child_path.lower() for hint in hints):
-                named.append((depth, child_path, child))
-                continue
-        purpose = child.GetAttribute("purpose")
-        if purpose.IsValid() and purpose.HasAuthoredValueOpinion() and str(purpose.Get()).lower() == "guide":
-            generic.append((depth, child_path, child))
-            if hints and any(hint in name or hint in child_path.lower() for hint in hints):
-                named.append((depth, child_path, child))
-                continue
-        approximation = child.GetAttribute("physics:approximation")
-        if approximation.IsValid() and approximation.HasAuthoredValueOpinion():
-            generic.append((depth, child_path, child))
-            if hints and any(hint in name or hint in child_path.lower() for hint in hints):
+            if hint_matched:
                 named.append((depth, child_path, child))
     if len(named) > 1:
         named.sort(key=lambda entry: (entry[0], entry[1]))
@@ -118,11 +133,15 @@ def _matrix_to_quat_xyzw(rotation: np.ndarray) -> tuple[float, float, float, flo
     return float(x), float(y), float(z), float(w)
 
 
+class MissingCollisionCandidate(RuntimeError):
+    """Raised when an imported USD asset lacks an expected collision prim."""
+
+
 def _require_collision_candidate(candidate, item: dict, source_path: str):
     if candidate is not None:
         return candidate
     link_name = str(item.get("source_link", "")).strip() or str(item.get("name", "")).strip()
-    raise RuntimeError(
+    raise MissingCollisionCandidate(
         f"No collision prim matched link {link_name!r} below {source_path}; "
         "cannot create flattened collision body"
     )
@@ -133,7 +152,7 @@ class PhysicsLinkSync:
 
     def __init__(self, component_name: str, manifest_path: str | Path, kinematic_chain):
         import omni.usd
-        from pxr import PhysxSchema, UsdGeom, UsdPhysics
+        from pxr import UsdGeom, UsdPhysics
 
         self._component_name = component_name
         self._stage = omni.usd.get_context().get_stage()
@@ -142,7 +161,7 @@ class PhysicsLinkSync:
         self._UsdGeom = UsdGeom
         self._UsdPhysics = UsdPhysics
         self._chain = kinematic_chain
-        self._link_ops: dict[str, tuple[str, np.ndarray, object, object]] = {}
+        self._collision_ops: list[tuple[str, str, np.ndarray, object, object]] = []
         self._link_source_paths: dict[str, str] = {}
         self._visual_root = "Geometry/world"
 
@@ -159,26 +178,36 @@ class PhysicsLinkSync:
         root_path = f"/World/{component_name}/PhysicsLinks"
         UsdGeom.Xform.Define(self._stage, root_path)
 
-        links: dict[str, dict] = {}
         for item in items:
             link = str(item.get("source_link", "")).strip()
-            if not link or link in links:
+            if not link or link in self._link_source_paths:
                 continue
-            links[link] = item
             source_relative = str(item.get("prim", "")).strip("/")
             if source_relative:
                 self._link_source_paths[link] = f"/World/{component_name}/{self._visual_root}/{source_relative}"
             else:
                 self._link_source_paths[link] = f"/World/{component_name}/{self._visual_root}"
 
-        for link, item in links.items():
-            prim_path = f"{root_path}/{link}"
-            translate_op, orient_op, offset = self._create_flattened_link(
-                prim_path, item, UsdGeom, UsdPhysics, PhysxSchema
-            )
-            self._link_ops[link] = (prim_path, offset, translate_op, orient_op)
+        used_names: set[str] = set()
+        for index, item in enumerate(items):
+            link = str(item.get("source_link", "")).strip()
+            if not link:
+                continue
+            body_name = _collision_body_name(item, index)
+            if body_name in used_names:
+                body_name = f"{body_name}_{index}"
+            used_names.add(body_name)
+            prim_path = f"{root_path}/{body_name}"
+            try:
+                translate_op, orient_op, offset = self._create_flattened_link(
+                    prim_path, item, UsdGeom, UsdPhysics
+                )
+            except MissingCollisionCandidate as exc:
+                print(f"[usd_physics_links] warning: {exc}", flush=True)
+                continue
+            self._collision_ops.append((link, prim_path, offset, translate_op, orient_op))
 
-    def _create_flattened_link(self, prim_path, item, UsdGeom, UsdPhysics, PhysxSchema):
+    def _create_flattened_link(self, prim_path, item, UsdGeom, UsdPhysics):
         from pxr import Usd
 
         link_xform = UsdGeom.Xform.Define(self._stage, prim_path)
@@ -186,12 +215,6 @@ class PhysicsLinkSync:
 
         rigid = UsdPhysics.RigidBodyAPI.Apply(link_prim)
         rigid.CreateKinematicEnabledAttr().Set(True)
-        try:
-            physx_rigid = PhysxSchema.PhysxRigidBodyAPI.Apply(link_prim)
-            physx_rigid.CreateEnableCCDAttr().Set(True)
-        except Exception:
-            # Some PhysX builds ignore or omit CCD on kinematic actors.
-            pass
 
         xformable = UsdGeom.Xformable(link_prim)
         translate_op = xformable.AddTranslateOp(
@@ -250,10 +273,13 @@ class PhysicsLinkSync:
         return translate_op, orient_op, offset
 
     def update(self, joint_names, joint_position, jaw_position=None):
-        del jaw_position
         q = np.asarray(joint_position, dtype=float)
-        poses = self._chain.forward_all_links(q, joint_names)
-        for link, (_, local_offset, translate_op, orient_op) in self._link_ops.items():
+        names = tuple(joint_names)
+        if jaw_position is not None:
+            names = names + ("jaw",)
+            q = np.concatenate([q, np.asarray([float(jaw_position)], dtype=float)])
+        poses = self._chain.forward_all_links(q, names)
+        for link, _, local_offset, translate_op, orient_op in self._collision_ops:
             if link not in poses:
                 continue
             world = poses[link] @ local_offset

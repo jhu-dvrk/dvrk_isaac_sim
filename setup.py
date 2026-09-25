@@ -17,6 +17,7 @@ script_files = [
     "scripts/generate_cart_frames.py",
     "scripts/validate_config.py",
     "scripts/benchmark_interactive.py",
+    "scripts/debug_collision_offsets.py",
     "scripts/_isaac_sim_build.py",
 ]
 
