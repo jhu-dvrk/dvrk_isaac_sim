@@ -56,16 +56,32 @@ def _is_collision_candidate(prim) -> bool:
     return approximation.IsValid() and approximation.HasAuthoredValueOpinion()
 
 
-def _apply_collision_api(prim, UsdPhysics) -> bool:
+def _apply_collision_debug_color(prim, UsdGeom) -> None:
+    if UsdGeom is None:
+        return
+    gprim = UsdGeom.Gprim(prim)
+    gprim.CreateDisplayColorAttr().Set([(1.0, 0.0, 0.0)])
+    gprim.CreateDisplayOpacityAttr().Set([1.0])
+
+
+def _is_mesh_geometry(prim, UsdGeom) -> bool:
+    if UsdGeom is None or not hasattr(UsdGeom, "Mesh"):
+        return True
+    return prim.IsA(UsdGeom.Mesh)
+
+
+def _apply_collision_api(prim, UsdPhysics, UsdGeom=None) -> bool:
     applied = False
     if not prim.HasAPI(UsdPhysics.CollisionAPI):
         UsdPhysics.CollisionAPI.Apply(prim)
         applied = True
 
-    mesh_collision = UsdPhysics.MeshCollisionAPI.Apply(prim)
-    approximation = _collision_approximation(prim)
-    if approximation is not None:
-        mesh_collision.CreateApproximationAttr().Set(approximation)
+    _apply_collision_debug_color(prim, UsdGeom)
+    if _is_mesh_geometry(prim, UsdGeom):
+        mesh_collision = UsdPhysics.MeshCollisionAPI.Apply(prim)
+        approximation = _collision_approximation(prim)
+        if approximation is not None:
+            mesh_collision.CreateApproximationAttr().Set(approximation)
     return applied
 
 
@@ -99,5 +115,5 @@ def apply_collision_meshes(component_name: str, manifest_path: str | Path | None
             continue
 
         for target in _collision_targets(prim, Usd, UsdGeom):
-            applied += int(_apply_collision_api(target, UsdPhysics))
+            applied += int(_apply_collision_api(target, UsdPhysics, UsdGeom))
     return applied

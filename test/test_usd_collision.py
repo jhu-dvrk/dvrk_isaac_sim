@@ -77,6 +77,8 @@ class _FakeCollisionPrim(_FakePrim):
         super().__init__(name, parent)
         self.apis = set()
         self.mesh_collision = _FakeMeshCollision()
+        self.display_color = _FakeApproximationAttr()
+        self.display_opacity = _FakeApproximationAttr()
 
     def HasAPI(self, api):
         return api in self.apis
@@ -98,7 +100,26 @@ class _FakeUsd:
 
 class _FakeUsdGeom:
     class Gprim:
+        def __init__(self, prim):
+            self.prim = prim
+
+        def CreateDisplayColorAttr(self):
+            return self.prim.display_color
+
+        def CreateDisplayOpacityAttr(self):
+            return self.prim.display_opacity
+
+    class Mesh:
         pass
+
+
+def test_apply_collision_api_authors_red_debug_color():
+    prim = _FakeCollisionPrim("mesh", _FakePrim("PSM1_wrist_pitch_link"))
+    prim.IsA = lambda schema: schema is _FakeUsdGeom.Mesh
+
+    assert _apply_collision_api(prim, _FakeUsdPhysics, _FakeUsdGeom)
+    assert prim.display_color.value == [(1.0, 0.0, 0.0)]
+    assert prim.display_opacity.value == [1.0]
 
 
 class _FakeGeometryChild:

@@ -51,6 +51,75 @@ def _load_obj_vertices(path: Path) -> np.ndarray:
     return np.asarray(vertices, dtype=float)
 
 
+def _box_points(size) -> np.ndarray:
+    half = 0.5 * np.asarray(size, dtype=float)
+    return np.asarray(
+        [
+            [x, y, z]
+            for x in (-half[0], half[0])
+            for y in (-half[1], half[1])
+            for z in (-half[2], half[2])
+        ],
+        dtype=float,
+    )
+
+
+def _cylinder_points(radius: float, length: float, segments: int = 24) -> np.ndarray:
+    angles = np.linspace(0.0, 2.0 * np.pi, int(segments), endpoint=False)
+    half = 0.5 * float(length)
+    rings = [
+        [float(radius) * np.cos(angle), float(radius) * np.sin(angle), z]
+        for z in (-half, half)
+        for angle in angles
+    ]
+    return np.asarray(rings + [[0.0, 0.0, -half], [0.0, 0.0, half]], dtype=float)
+
+
+def _sphere_points(radius: float, segments: int = 16) -> np.ndarray:
+    radius = float(radius)
+    points = [
+        [radius, 0.0, 0.0],
+        [-radius, 0.0, 0.0],
+        [0.0, radius, 0.0],
+        [0.0, -radius, 0.0],
+        [0.0, 0.0, radius],
+        [0.0, 0.0, -radius],
+    ]
+    angles = np.linspace(0.0, 2.0 * np.pi, int(segments), endpoint=False)
+    points.extend([radius * np.cos(angle), radius * np.sin(angle), 0.0] for angle in angles)
+    return np.asarray(points, dtype=float)
+
+
+def _geometry_points(geometry: dict) -> np.ndarray | None:
+    geometry_type = geometry.get("type")
+    if geometry_type == "mesh":
+        path = _package_uri_to_path(str(geometry.get("filename", "")))
+        if path is None or not path.is_file():
+            return None
+        points = _load_obj_vertices(path)
+        scale = np.asarray(geometry.get("scale", [1.0, 1.0, 1.0]), dtype=float)
+        if scale.shape != (3,) or np.any(scale == 0.0):
+            scale = np.ones(3, dtype=float)
+        return points * scale
+    if geometry_type == "box":
+        size = np.asarray(geometry.get("size", [0.0, 0.0, 0.0]), dtype=float)
+        if size.shape != (3,) or np.any(size <= 0.0):
+            return None
+        return _box_points(size)
+    if geometry_type == "cylinder":
+        radius = float(geometry.get("radius", 0.0))
+        length = float(geometry.get("length", 0.0))
+        if radius <= 0.0 or length <= 0.0:
+            return None
+        return _cylinder_points(radius, length)
+    if geometry_type == "sphere":
+        radius = float(geometry.get("radius", 0.0))
+        if radius <= 0.0:
+            return None
+        return _sphere_points(radius)
+    return None
+
+
 def _corners(minimum: np.ndarray, maximum: np.ndarray) -> np.ndarray:
     return np.asarray(
         [
@@ -132,16 +201,11 @@ class KinematicContactGuard:
             if not isinstance(item, dict):
                 continue
             geometry = item.get("geometry")
-            if not isinstance(geometry, dict) or geometry.get("type") != "mesh":
+            if not isinstance(geometry, dict):
                 continue
-            path = _package_uri_to_path(str(geometry.get("filename", "")))
-            if path is None or not path.is_file():
+            points = _geometry_points(geometry)
+            if points is None:
                 continue
-            points = _load_obj_vertices(path)
-            scale = np.asarray(geometry.get("scale", [1.0, 1.0, 1.0]), dtype=float)
-            if scale.shape != (3,) or np.any(scale == 0.0):
-                scale = np.ones(3, dtype=float)
-            points = points * scale
             origin = _transform(
                 _rpy_matrix(*[float(value) for value in item.get("origin_rpy", [0.0, 0.0, 0.0])]),
                 [float(value) for value in item.get("origin_xyz", [0.0, 0.0, 0.0])],

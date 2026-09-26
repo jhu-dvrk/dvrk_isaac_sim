@@ -4,8 +4,10 @@ import pytest
 
 from dvrk_isaac_sim.urdf_kinematics import _rotation, _transform
 from dvrk_isaac_sim.usd_physics_links import (
+    _apply_collision_debug_color,
     _candidate_collision_prim,
     _collision_body_name,
+    _primitive_geometry,
     _relative_offset_from_stage_transforms,
     _require_collision_candidate,
 )
@@ -26,12 +28,17 @@ class _FakeAttr:
     def Get(self):
         return self._value
 
+    def Set(self, value):
+        self._value = value
+
 
 class _FakePrim:
     def __init__(self, name: str, path: str, is_gprim: bool = True):
         self._name = name
         self._path = path
         self._is_gprim = is_gprim
+        self.display_color = _FakeAttr()
+        self.display_opacity = _FakeAttr()
 
     def IsActive(self):
         return True
@@ -66,7 +73,14 @@ class _FakeUsd:
 
 class _FakeUsdGeom:
     class Gprim:
-        pass
+        def __init__(self, prim):
+            self.prim = prim
+
+        def CreateDisplayColorAttr(self):
+            return self.prim.display_color
+
+        def CreateDisplayOpacityAttr(self):
+            return self.prim.display_opacity
 
 
 def test_relative_offset_from_stage_transforms_matches_candidate_world_transform():
@@ -78,6 +92,25 @@ def test_relative_offset_from_stage_transforms_matches_candidate_world_transform
 
     np.testing.assert_allclose(offset, expected_offset, atol=1e-12)
     np.testing.assert_allclose(link_world @ offset, candidate_world, atol=1e-12)
+
+
+def test_collision_debug_color_authors_red_on_flattened_geometry():
+    prim = _FakePrim("Collision", "/World/PSM1/PhysicsLinks/roll/Collision")
+
+    _apply_collision_debug_color(prim, _FakeUsdGeom)
+
+    assert prim.display_color.Get() == [(1.0, 0.0, 0.0)]
+    assert prim.display_opacity.Get() == [1.0]
+
+
+def test_primitive_geometry_accepts_roll_cylinder_manifest_item():
+    item = {
+        "source_link": "PSM1_roll_link",
+        "geometry": {"type": "cylinder", "radius": 0.004373, "length": 0.559625},
+    }
+
+    assert _primitive_geometry(item) == item["geometry"]
+    assert _primitive_geometry({"geometry": {"type": "mesh"}}) is None
 
 
 def test_candidate_collision_prim_warns_on_ambiguous_named_matches(capsys):

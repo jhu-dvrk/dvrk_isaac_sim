@@ -62,6 +62,23 @@ def _has_collision_identity(prim) -> bool:
     return approximation.IsValid() and approximation.HasAuthoredValueOpinion()
 
 
+def _apply_collision_debug_color(prim, UsdGeom) -> None:
+    if not prim.IsA(UsdGeom.Gprim):
+        return
+    gprim = UsdGeom.Gprim(prim)
+    gprim.CreateDisplayColorAttr().Set([(1.0, 0.0, 0.0)])
+    gprim.CreateDisplayOpacityAttr().Set([1.0])
+
+
+def _primitive_geometry(item: dict) -> dict | None:
+    geometry = item.get("geometry")
+    if not isinstance(geometry, dict):
+        return None
+    if geometry.get("type") in {"box", "cylinder", "sphere"}:
+        return geometry
+    return None
+
+
 def _candidate_collision_prim(prim, Usd, UsdGeom, item: dict, blocked_paths: tuple[str, ...] = ()):
     hints = _collision_name_hints(item)
     source_path = str(prim.GetPath())
@@ -230,6 +247,16 @@ class PhysicsLinkSync:
         else:
             source_path = f"/World/{self._component_name}/{self._visual_root}"
         source_prim = self._stage.GetPrimAtPath(source_path)
+
+        primitive = _primitive_geometry(item)
+        if primitive is not None:
+            offset = _transform_from_origin(
+                item.get("origin_xyz", [0.0, 0.0, 0.0]),
+                item.get("origin_rpy", [0.0, 0.0, 0.0]),
+            )
+            self._create_primitive_collision(f"{prim_path}/Collision", primitive, UsdGeom, UsdPhysics)
+            return translate_op, orient_op, offset
+
         candidate = None
         if source_prim.IsValid():
             blocked_paths = tuple(
@@ -269,8 +296,36 @@ class PhysicsLinkSync:
         for geometry in geometry_targets:
             if not geometry.HasAPI(UsdPhysics.CollisionAPI):
                 UsdPhysics.CollisionAPI.Apply(geometry)
+            _apply_collision_debug_color(geometry, UsdGeom)
 
         return translate_op, orient_op, offset
+
+    def _create_primitive_collision(self, prim_path: str, geometry: dict, UsdGeom, UsdPhysics) -> None:
+        geometry_type = geometry.get("type")
+        if geometry_type == "cylinder":
+            collision = UsdGeom.Cylinder.Define(self._stage, prim_path)
+            collision.CreateRadiusAttr().Set(float(geometry.get("radius", 0.0)))
+            collision.CreateHeightAttr().Set(float(geometry.get("length", 0.0)))
+        elif geometry_type == "sphere":
+            collision = UsdGeom.Sphere.Define(self._stage, prim_path)
+            collision.CreateRadiusAttr().Set(float(geometry.get("radius", 0.0)))
+        elif geometry_type == "box":
+            collision = UsdGeom.Cube.Define(self._stage, prim_path)
+            collision.CreateSizeAttr().Set(1.0)
+            size = geometry.get("size", [1.0, 1.0, 1.0])
+            scale_op = UsdGeom.Xformable(collision.GetPrim()).AddScaleOp(
+                precision=UsdGeom.XformOp.PrecisionDouble, opSuffix="collision"
+            )
+            from pxr import Gf
+
+            scale_op.Set(Gf.Vec3d(float(size[0]), float(size[1]), float(size[2])))
+        else:
+            raise RuntimeError(f"Unsupported primitive collision geometry: {geometry_type}")
+
+        collision_prim = collision.GetPrim()
+        if not collision_prim.HasAPI(UsdPhysics.CollisionAPI):
+            UsdPhysics.CollisionAPI.Apply(collision_prim)
+        _apply_collision_debug_color(collision_prim, UsdGeom)
 
     def update(self, joint_names, joint_position, jaw_position=None):
         q = np.asarray(joint_position, dtype=float)
