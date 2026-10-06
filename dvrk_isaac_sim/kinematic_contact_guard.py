@@ -162,6 +162,7 @@ class KinematicContactGuard:
         *,
         margin: float = 0.0005,
         iterations: int = 12,
+        static_only: bool = False,
     ) -> None:
         self._chain = kinematic_chain
         self._margin = float(margin)
@@ -169,7 +170,8 @@ class KinematicContactGuard:
         self._obstacles = tuple(
             _prop_aabb(prop, self._margin)
             for prop in props
-            if prop.kind in {"cube", "table"} and (prop.static or prop.dynamic)
+            if prop.kind in {"cube", "sphere", "table"} and (prop.static or prop.dynamic)
+            and (not static_only or prop.static)
         )
         self._clouds = self._load_clouds(Path(manifest_path))
 

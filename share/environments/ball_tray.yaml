@@ -1,0 +1,123 @@
+scene:
+  name: ball_tray
+  base_frame_provider: yaml
+  camera:
+    mode: "off"
+    owner: ECM
+
+  props:
+    - name: tray_base
+      kind: cube
+      position: [0.0, 0.0, 0.0]
+      orientation_xyzw: [0.0, 0.0, 0.0, 1.0]
+      size: [0.50, 0.50, 0.01]
+      static: true
+      color: [0.24, 0.28, 0.30, 1.0]
+
+    - name: wall_x_positive
+      kind: cube
+      position: [0.24, 0.0, 0.105]
+      orientation_xyzw: [0.0, 0.0, 0.0, 1.0]
+      size: [0.02, 0.50, 0.20]
+      static: true
+      guard_kinematic_tools: true
+      color: [0.36, 0.40, 0.42, 1.0]
+
+    - name: wall_x_negative
+      kind: cube
+      position: [-0.24, 0.0, 0.105]
+      orientation_xyzw: [0.0, 0.0, 0.0, 1.0]
+      size: [0.02, 0.50, 0.20]
+      static: true
+      guard_kinematic_tools: true
+      color: [0.36, 0.40, 0.42, 1.0]
+
+    - name: wall_y_positive
+      kind: cube
+      position: [0.0, 0.24, 0.105]
+      orientation_xyzw: [0.0, 0.0, 0.0, 1.0]
+      size: [0.46, 0.02, 0.20]
+      static: true
+      guard_kinematic_tools: true
+      color: [0.36, 0.40, 0.42, 1.0]
+
+    - name: wall_y_negative
+      kind: cube
+      position: [0.0, -0.24, 0.105]
+      orientation_xyzw: [0.0, 0.0, 0.0, 1.0]
+      size: [0.46, 0.02, 0.20]
+      static: true
+      guard_kinematic_tools: true
+      color: [0.36, 0.40, 0.42, 1.0]
+
+    - name: ball_01
+      kind: sphere
+      position: [-0.0175, -0.0275, 0.010]
+      size: [0.01, 0.01, 0.01]
+      dynamic: true
+      mass: 0.0005
+      color: [0.92, 0.24, 0.18, 1.0]
+
+    - name: ball_015
+      kind: sphere
+      position: [-0.005, -0.0275, 0.0125]
+      size: [0.015, 0.015, 0.015]
+      dynamic: true
+      mass: 0.0018
+      color: [0.95, 0.52, 0.16, 1.0]
+
+    - name: ball_02
+      kind: sphere
+      position: [0.0125, -0.0275, 0.015]
+      size: [0.02, 0.02, 0.02]
+      dynamic: true
+      mass: 0.0042
+      color: [0.91, 0.78, 0.20, 1.0]
+
+    - name: ball_025
+      kind: sphere
+      position: [-0.025, -0.0025, 0.0175]
+      size: [0.025, 0.025, 0.025]
+      dynamic: true
+      mass: 0.0082
+      color: [0.38, 0.70, 0.34, 1.0]
+
+    - name: ball_03
+      kind: sphere
+      position: [0.0025, -0.0025, 0.020]
+      size: [0.03, 0.03, 0.03]
+      dynamic: true
+      mass: 0.0141
+      color: [0.15, 0.63, 0.69, 1.0]
+
+    - name: ball_02_b
+      kind: sphere
+      position: [0.0275, -0.0025, 0.015]
+      size: [0.02, 0.02, 0.02]
+      dynamic: true
+      mass: 0.0042
+      color: [0.28, 0.43, 0.83, 1.0]
+
+    - name: ball_015_b
+      kind: sphere
+      position: [-0.0175, 0.025, 0.0125]
+      size: [0.015, 0.015, 0.015]
+      dynamic: true
+      mass: 0.0018
+      color: [0.55, 0.35, 0.76, 1.0]
+
+    - name: ball_025_b
+      kind: sphere
+      position: [0.0025, 0.025, 0.0175]
+      size: [0.025, 0.025, 0.025]
+      dynamic: true
+      mass: 0.0082
+      color: [0.82, 0.31, 0.55, 1.0]
+
+    - name: ball_01_b
+      kind: sphere
+      position: [0.02, 0.025, 0.010]
+      size: [0.01, 0.01, 0.01]
+      dynamic: true
+      mass: 0.0005
+      color: [0.82, 0.38, 0.22, 1.0]

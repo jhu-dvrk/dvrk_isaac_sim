@@ -355,8 +355,12 @@ def _spawn_scene_props(props) -> None:
     root = stage.DefinePrim("/World/Environment", "Xform")
     for prop in props:
         prim_path = Sdf.Path(f"/World/Environment/{prop.name}")
-        geometry = UsdGeom.Cube.Define(stage, prim_path)
-        geometry.CreateSizeAttr(1.0)
+        if prop.kind == "sphere":
+            geometry = UsdGeom.Sphere.Define(stage, prim_path)
+            geometry.CreateRadiusAttr(0.5)
+        else:
+            geometry = UsdGeom.Cube.Define(stage, prim_path)
+            geometry.CreateSizeAttr(1.0)
         geometry.CreateDisplayColorAttr([
             Gf.Vec3f(*(prop.color[:3] if prop.color is not None else (0.7, 0.7, 0.7)))
         ])
@@ -535,8 +539,12 @@ def main() -> int:
                     table_surface_z,
                     margin=args.table_contact_clearance_m,
                 )
+            guarded_props = tuple(
+                prop for prop in args.scene_model.props if prop.guard_kinematic_tools
+            )
+            guard_props = guarded_props or args.scene_model.props
             if (
-                args.kinematic_contact_guard
+                (args.kinematic_contact_guard or guarded_props)
                 and config.type == "PSM"
                 and config.kinematics_manifest is not None
                 and model._urdf_chain is not None
@@ -544,8 +552,9 @@ def main() -> int:
                 guard = KinematicContactGuard(
                     config.kinematics_manifest,
                     model._urdf_chain,
-                    args.scene_model.props,
+                    guard_props,
                     margin=args.table_contact_clearance_m,
+                    static_only=bool(guarded_props),
                 )
                 if guard.enabled:
                     model.set_motion_guard(guard.clamp)

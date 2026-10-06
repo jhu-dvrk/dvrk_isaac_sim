@@ -95,6 +95,26 @@ def test_environment_resolution_and_prop_only_environment_loads():
     assert resolve_environment_path(config_path, environment_path) == environment_path
 
 
+def test_ball_tray_environment_has_four_walls_and_dynamic_spheres():
+    config_path = ROOT / "share" / "isaac_sim.yaml.example"
+    environment_path = resolve_environment_path(config_path, "ball_tray")
+    environment = load_scene(environment_path)
+
+    assert environment.name == "ball_tray"
+    assert len(environment.props) == 14
+    walls = [prop for prop in environment.props if prop.name.startswith("wall_")]
+    balls = [prop for prop in environment.props if prop.kind == "sphere"]
+    assert len(walls) == 4
+    assert all(prop.static for prop in walls)
+    assert all(prop.guard_kinematic_tools for prop in walls)
+    assert len(balls) == 9
+    assert all(prop.dynamic for prop in balls)
+    assert not any(prop.guard_kinematic_tools for prop in balls)
+    assert {round(prop.size[0] * 100, 1) for prop in balls} == {
+        1.0, 1.5, 2.0, 2.5, 3.0
+    }
+
+
 def test_environment_can_overlay_a_scene():
     config_path = ROOT / "share" / "isaac_sim.yaml.example"
     scene = load_scene(resolve_scene_path(config_path, "ECM_PSM1_PSM2_PSM3_mono.yaml"))

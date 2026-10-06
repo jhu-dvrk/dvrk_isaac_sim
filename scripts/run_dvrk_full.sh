@@ -1,6 +1,43 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ENVIRONMENTS_DIR="${SCRIPT_DIR}/../share/environments"
+ENVIRONMENT="test_cube"
+
+usage() {
+  echo "Usage: $0 [--env NAME]"
+  echo "Select an environment YAML under share/environments. Default: test_cube"
+  echo "Available environments:"
+  for environment_file in "${ENVIRONMENTS_DIR}"/*.yaml; do
+    [[ -e "${environment_file}" ]] || continue
+    printf '  %s\n' "$(basename "${environment_file}" .yaml)"
+  done
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --env|-e)
+      if [[ $# -lt 2 || -z "$2" ]]; then
+        echo "Option $1 requires an environment name." >&2
+        usage >&2
+        exit 2
+      fi
+      ENVIRONMENT="$2"
+      shift 2
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
 export ROS_DISTRO=jazzy
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 export ISAAC_SIM_DIR="${HOME}/isaacsim"
@@ -53,8 +90,8 @@ gnome-terminal --title="Isaac Sim" -- bash -lc '
   export ISAAC_SIM_DIR="$HOME/isaacsim"
   export DVRK_MODEL_PATH="$HOME/dvrk_ws/src/dvrk/dvrk_model"
   cd "$HOME/dvrk_ws"
-  ros2 launch dvrk_isaac_sim simulator.launch.py scene:=ECM_PSM1_PSM2_PSM3_mono.yaml env:=test_cube
-'
+  ros2 launch dvrk_isaac_sim simulator.launch.py scene:=ECM_PSM1_PSM2_PSM3_mono.yaml env:="$1"
+' _ "$ENVIRONMENT"
 
 gnome-terminal --title="Haply System" -- bash -lc '
   set -eo pipefail
@@ -69,4 +106,4 @@ gnome-terminal --title="Haply System" -- bash -lc '
   ros2 run dvrk_robot dvrk_system -j "$HOME/dvrk_ws/src/dvrk/dvrk_isaac_sim/share/dvrk_systems/system-MTMR-PSM1-Haply-ROS.json"
 '
 
-echo "Opened Isaac Sim and Haply terminals after cleaning stale processes."
+echo "Opened Isaac Sim (environment: ${ENVIRONMENT}) and Haply terminals after cleaning stale processes."

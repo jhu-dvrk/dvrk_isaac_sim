@@ -50,3 +50,32 @@ def test_contact_guard_loads_primitive_collision_items(tmp_path: Path):
     np.testing.assert_allclose(cloud.local_points[:, 0].mean(), 1.0, atol=1e-4)
     np.testing.assert_allclose(cloud.local_points[:, 2].min(), 2.94)
     np.testing.assert_allclose(cloud.local_points[:, 2].max(), 3.06)
+
+
+def test_contact_guard_can_leave_dynamic_props_for_physics(tmp_path: Path):
+    static_base = SceneProp(
+        name="tray_base",
+        kind="table",
+        position=(0.0, 0.0, 0.0),
+        orientation_xyzw=(0.0, 0.0, 0.0, 1.0),
+        size=(0.3, 0.3, 0.01),
+        static=True,
+        dynamic=False,
+    )
+    dynamic_ball = SceneProp(
+        name="ball",
+        kind="sphere",
+        position=(0.0, 0.0, 0.02),
+        orientation_xyzw=(0.0, 0.0, 0.0, 1.0),
+        size=(0.03, 0.03, 0.03),
+        static=False,
+        dynamic=True,
+    )
+    manifest_path = tmp_path / "empty_collision_manifest.json"
+    manifest_path.write_text('{"collision": {"items": []}}', encoding="utf-8")
+
+    guard = KinematicContactGuard(
+        manifest_path, object(), [static_base, dynamic_ball], static_only=True
+    )
+
+    assert [obstacle.name for obstacle in guard._obstacles] == ["tray_base"]

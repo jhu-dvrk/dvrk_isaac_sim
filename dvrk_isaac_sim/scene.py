@@ -57,6 +57,7 @@ class SceneProp:
     dynamic: bool
     mass: float | None = None
     color: tuple[float, float, float, float] | None = None
+    guard_kinematic_tools: bool = False
 
 
 @dataclass(frozen=True)
@@ -406,7 +407,7 @@ def load_scene(scene_path: str | Path) -> SceneConfig:
             raise ValueError(f"{source}: scene prop is missing name")
         if name in names:
             raise ValueError(f"{source}: duplicate scene entry name {name}")
-        if kind not in {"cube", "table"}:
+        if kind not in {"cube", "sphere", "table"}:
             raise ValueError(f"{source}: unsupported prop kind {kind!r} for {name}")
         position = _float_tuple(source, configured.get("position", [0.0, 0.0, 0.0]), 3,
                                 f"scene.props[{name}].position")
@@ -420,6 +421,8 @@ def load_scene(scene_path: str | Path) -> SceneConfig:
         size = _float_tuple(source, size_value, 3, f"scene.props[{name}].size")
         if any(component <= 0.0 for component in size):
             raise ValueError(f"{source}: scene.props[{name}].size values must be positive")
+        if kind == "sphere" and max(size) - min(size) > 1e-9:
+            raise ValueError(f"{source}: scene.props[{name}].size must be uniform for a sphere")
         color_value = configured.get("color")
         color = None
         if color_value is not None:
@@ -444,6 +447,7 @@ def load_scene(scene_path: str | Path) -> SceneConfig:
             dynamic=dynamic,
             mass=mass,
             color=color,
+            guard_kinematic_tools=bool(configured.get("guard_kinematic_tools", False)),
         ))
 
     if not entries and not props:
