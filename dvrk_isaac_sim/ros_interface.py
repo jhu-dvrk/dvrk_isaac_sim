@@ -13,7 +13,9 @@ from dvrk_simulator_base.command_validation import (
     joint_positions_from_message,
     pose_from_message as _pose_from_ros,
 )
-from dvrk_simulator_base.command_mailbox import CommandEnvelope, CommandMailboxes
+from dvrk_simulator_base.command_mailbox import (
+    CommandEnvelope, CommandMailboxes, DeferredCommandPayload,
+)
 from dvrk_simulator_base.cartesian_frames import (
     _VIEW_TO_OPTICAL_ROTATION,
     compose_pose as _compose_pose,
@@ -134,10 +136,10 @@ class CRTKROSComponent:
             JointState, "servo_jp", locked(self._servo_jp_callback), 1
         )
         node.create_subscription(
-            PoseStamped, "move_cp", locked(self._move_cp_callback), 10
+            PoseStamped, "move_cp", self._move_cp_callback, 10
         )
         node.create_subscription(
-            PoseStamped, "servo_cp", locked(self._servo_cp_callback), 1
+            PoseStamped, "servo_cp", self._servo_cp_callback, 1
         )
         if self._has_jaw:
             self._jaw_move_subscription = node.create_subscription(
@@ -431,24 +433,22 @@ class CRTKROSComponent:
         self._submit("servo_jp", target, servo=True)
 
     def _move_cp_callback(self, message) -> None:
-        try:
-            payload = (_pose_from_ros(message), str(message.header.frame_id))
-        except ValueError as error:
-            self._command_rejected()
-            self._publish_warning(f"rejected move_cp: {error}")
-            self.node.get_logger().warning(f"{self.config.name} rejected move_cp: {error}")
-            return
-        self._submit("move_cp", payload, servo=False)
+        self._submit(
+            "move_cp",
+            DeferredCommandPayload(message, self._resolve_cp_message),
+            servo=False,
+        )
 
     def _servo_cp_callback(self, message) -> None:
-        try:
-            payload = (_pose_from_ros(message), str(message.header.frame_id))
-        except ValueError as error:
-            self._command_rejected()
-            self._publish_warning(f"rejected servo_cp: {error}")
-            self.node.get_logger().warning(f"{self.config.name} rejected servo_cp: {error}")
-            return
-        self._submit("servo_cp", payload, servo=True)
+        self._submit(
+            "servo_cp",
+            DeferredCommandPayload(message, self._resolve_cp_message),
+            servo=True,
+        )
+
+    @staticmethod
+    def _resolve_cp_message(message) -> tuple[Pose, str]:
+        return _pose_from_ros(message), str(message.header.frame_id)
 
     def process_pending_commands(self) -> None:
         """Apply all queued commands from the Isaac-owned control loop."""
@@ -477,7 +477,10 @@ class CRTKROSComponent:
                     if command.channel == "move_cp_world":
                         target = command.payload
                     else:
-                        pose, frame_id = command.payload
+                        payload = command.payload
+                        if isinstance(payload, DeferredCommandPayload):
+                            payload = payload.resolve()
+                        pose, frame_id = payload
                         target = self._pose_from_ros(pose, frame_id)
                     result = self.model.move_cp(target)
                     if not result.success:
@@ -491,7 +494,7 @@ class CRTKROSComponent:
                         self._publish_motion_edges()
                 else:
                     raise ValueError(f"unsupported command channel {command.channel!r}")
-            except ValueError as error:
+            except (TypeError, ValueError, AttributeError) as error:
                 self._command_rejected()
                 self._publish_warning(f"rejected {command.channel}: {error}")
                 self.node.get_logger().warning(

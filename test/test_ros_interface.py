@@ -2,9 +2,11 @@ from pathlib import Path
 
 import numpy as np
 from ament_index_python.packages import get_package_share_directory
+from geometry_msgs.msg import PoseStamped
 
 from dvrk_isaac_sim.kinematics import CRTKPSM
 from dvrk_isaac_sim.ros_interface import CRTKROSComponent
+import dvrk_isaac_sim.ros_interface as ros_interface_module
 from dvrk_arm_description import load_robot_config
 
 
@@ -58,7 +60,7 @@ class _JointMessage:
 
 
 def _component():
-    arms = Path(get_package_share_directory("dvrk_simulator_base")) / "share" / "arms"
+    arms = Path(get_package_share_directory("dvrk_arm_description")) / "arms"
     model = CRTKPSM(load_robot_config(arms / "PSM1.yaml"))
     return CRTKROSComponent(_Node(), model.config, model, _Stamp())
 
@@ -79,6 +81,28 @@ def test_ros_callbacks_queue_servo_commands_until_isaac_processes_them():
     component.process_pending_commands()
 
     np.testing.assert_allclose(component.model.goal_js().position, newest)
+
+
+def test_servo_cp_converts_only_the_pose_selected_by_the_mailbox(monkeypatch):
+    component = _component()
+    original_pose_from_ros = ros_interface_module._pose_from_ros
+    converted = []
+
+    def record_conversion(message):
+        converted.append(message)
+        return original_pose_from_ros(message)
+
+    monkeypatch.setattr(ros_interface_module, "_pose_from_ros", record_conversion)
+    old = PoseStamped()  # Invalid quaternion must not be processed.
+    newest = PoseStamped()
+    newest.pose.orientation.w = 1.0
+    component._servo_cp_callback(old)
+    component._servo_cp_callback(newest)
+
+    assert converted == []
+    assert component.command_metrics()[2] == 1
+    component.process_pending_commands()
+    assert converted == [newest]
 
 
 def test_ros_publication_uses_an_immutable_base_snapshot():
