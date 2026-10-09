@@ -9,9 +9,7 @@ from __future__ import annotations
 
 import math
 
-from _isaac_sim_build import require_isaac_sim_build
 
-require_isaac_sim_build(__file__)
 
 # Patient-cart layout constants.  The world origin is the center of the
 # notional surgical workspace sphere.

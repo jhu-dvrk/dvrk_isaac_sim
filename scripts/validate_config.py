@@ -12,22 +12,20 @@ _package_root = Path(__file__).resolve().parents[1]
 if str(_package_root) not in sys.path:
     sys.path.insert(0, str(_package_root))
 
-from _isaac_sim_build import require_isaac_sim_build
-from dvrk_isaac_sim.scene import available_scene_paths, load_scene, load_simulator_config
+from dvrk_isaac_sim.configuration import load_installed_scene_config, load_simulator_config
 
-require_isaac_sim_build(__file__)
 
 
 def main() -> int:
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", type=Path, default=root / "share" / "isaac_sim.yaml")
+    parser.add_argument("--config", type=Path, default=root / "share" / "isaac_sim.yaml.example")
     args = parser.parse_args()
     config_path = args.config.expanduser().resolve()
     simulator = load_simulator_config(config_path)
-    scenes = available_scene_paths(config_path)
+    scenes = sorted((root / "share" / "scenes").glob("*.yaml"))
     for scene_path in scenes:
-        scene = load_scene(scene_path)
+        scene = load_installed_scene_config(scene_path)
         print(f"OK {scene_path.name}: {len(scene.robots)} robots, camera={scene.camera.mode}")
     print(f"OK {config_path.name}: renderer={simulator.renderer}, scenes={len(scenes)}")
     return 0

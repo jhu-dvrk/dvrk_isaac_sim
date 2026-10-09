@@ -10,13 +10,13 @@ from dvrk_arm_description import load_robot_config
 from dvrk_isaac_sim.kinematics import CRTKECM, CRTKPSM, Pose
 from dvrk_simulator_base.operating_state import CRTKOperatingState
 from dvrk_simulator_base.cartesian_frames import (
-    _VIEW_TO_OPTICAL_ROTATION,
-    _view_pose_from_optical,
+    VIEW_TO_OPTICAL_ROTATION,
+    view_pose_from_optical,
 )
 
 
 ROOT = Path(__file__).parents[1]
-BASE_ARMS = Path(get_package_share_directory("dvrk_simulator_base")) / "share" / "arms"
+BASE_ARMS = Path(get_package_share_directory("dvrk_arm_description")) / "arms"
 
 
 def test_psm_home_pose_and_jacobian():
@@ -93,10 +93,10 @@ def test_psm_pose_ik_reaches_orientation():
 
 def test_dvrk_view_axes_are_derived_from_ecm_optical_axes():
     optical = Pose(np.zeros(3), np.eye(3))
-    view = _view_pose_from_optical(optical)
+    view = view_pose_from_optical(optical)
     # dVRK view: X-left, Y-up, Z-away. Isaac camera optical: X-forward,
     # Y-left, Z-up. Therefore V(X,Y,Z) maps to C(Y,Z,X).
-    np.testing.assert_allclose(view.orientation, _VIEW_TO_OPTICAL_ROTATION)
+    np.testing.assert_allclose(view.orientation, VIEW_TO_OPTICAL_ROTATION)
     np.testing.assert_allclose(view.orientation @ [1.0, 0.0, 0.0], [0.0, 1.0, 0.0])
     np.testing.assert_allclose(view.orientation @ [0.0, 1.0, 0.0], [0.0, 0.0, 1.0])
     np.testing.assert_allclose(view.orientation @ [0.0, 0.0, 1.0], [1.0, 0.0, 0.0])
@@ -128,3 +128,22 @@ def test_joint_command_validation_rejects_duplicate_names_and_bad_jaws():
     assert jaw_position_from_message(_JointMessage(position=(0.25,))) == 0.25
     with pytest.raises(ValueError):
         jaw_position_from_message(_JointMessage(position=(0.1, 0.2)))
+
+
+def test_ecm_manifest_includes_endoscope_tip_transform(tmp_path):
+    import subprocess
+    from dvrk_isaac_sim.urdf_kinematics import write_kinematics_manifest
+    from ament_index_python.packages import get_package_share_directory
+
+    model = Path(get_package_share_directory('dvrk_model'))
+    urdf = tmp_path / 'ECM.urdf'
+    with urdf.open('w') as stream:
+        subprocess.run(['xacro', str(model / 'urdf/Virtual/ECM.urdf.xacro'),
+                        'endoscope:=Si_straight'], stdout=stream, check=True)
+    manifest = write_kinematics_manifest(urdf, tmp_path / 'kinematics.json', 'ECM')
+    robot = CRTKECM(load_robot_config(BASE_ARMS / 'ECM.yaml'), kinematics_manifest=manifest)
+    pose = robot.measured_cp()
+    # The scope's fixed links cancel the adaptor offset at zero insertion.
+    np.testing.assert_allclose(pose.position, [0., 0., -0.02], atol=1e-8)
+    np.testing.assert_allclose(pose.orientation[:, 0], [0., 0., -1.], atol=1e-8)
+    assert robot._urdf_chain is not None

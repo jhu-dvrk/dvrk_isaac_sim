@@ -127,48 +127,12 @@ and OpenXR remain backend-local.
 
 ## Phase 4 — OpenXR patient-cart example
 
-The current Isaac camera offers ROS and RTSP transports. The PyBullet OpenXR
-example uses a GStreamer Unix-FD side-by-side RGBA stream, so Isaac needs an
-Isaac-owned Unix-FD transport; neither a ROS image topic nor RTSP is a
-substitute for this example. `dvrk_simulator_base` must not gain GStreamer,
-Isaac camera, PyBullet EGL, RTSP, or Unix-FD dependencies.
+The current Isaac implementation uses native RTSP only. Unix-FD video is
+postponed; Newton and PyBullet keep their socket transports. The shared base
+owns the IPC worker loop, ROS interfaces, and common diagnostics. Isaac owns
+USD assets, kinematics, reference-frame conversion, rendering, and RTSP.
 
-1. Implement an Isaac-local video sink with the same externally documented
-   Unix-FD RGBA behavior as the PyBullet example. Do not move it to the base
-   package; any shared implementation is a separate future extraction only if
-   it remains free of backend-specific dependencies.
-2. Add `unixfd` camera configuration: acquire Isaac's tiled stereo RGBA buffer,
-   push it on each camera update, and start/stop it with the camera lifecycle.
-   Fail clearly if GStreamer `appsrc` or `unixfdsink` is unavailable.
-3. Add `share/open-xr/isaac.yaml` for headless three-PSM+ECM stereo rendering
-   and a documented socket such as `@dvrk:isaac:stereo_source`.
-4. Add adapted system, console-overlay, and sawOpenXR Unix-FD JSON files under
-   `share/open-xr/`, preserving MTM-to-PSM/ECM pairing from the PyBullet setup.
-5. Add `launch/open_xr.launch.py`, modelled on PyBullet: start Isaac,
-   `dvrk_system`, console overlay, and `start_dvrk_system`; tie shutdown to
-   each required process; expose console, scene, and GUI/headless arguments.
-6. Add a local README with dependencies, exact launch command, required socket
-   names, headset prerequisites, and manual bring-up instructions.
-
-Exit criterion: an operator can home the Isaac patient cart, enable MTM-to-
-PSM/ECM teleoperation, and view live stereo ECM video through OpenXR.
-
-## Phase 5 — Delete duplication and accept the migration
-
-1. Delete local duplicate modules, duplicate arm YAML, stale tests, and Omni UI
-   only after all callers, installed data files, and regression tests use base
-   replacements.
-2. Update README, installation, design, and frame documentation to identify
-   base as the CRTK/ROS source of truth and Isaac as the backend.
-3. Require these acceptance levels: pure-Python unit tests; installed scene
-   tests; headless Isaac CRTK smoke test; desktop PyQt6 smoke test; OpenXR
-   video socket test; manual OpenXR teleoperation/homing test.
-4. Keep exercises, contacts, and task assets out of this branch.
-
-## Risks and sequencing
-
-Complete Phases 0–3 before OpenXR. The primary risk is thread ownership: Isaac
-APIs remain on the simulator owner thread, while ROS and the external Qt process
-communicate only through message/IPC boundaries. The second risk is video
-format: verify Isaac stereo RGBA eye order and orientation against the console
-overlay before HMD testing. The package must build after every phase.
+`launch/open_xr.launch.py` combines the patient cart and an exercise scene.
+JHU system launches expose only `exercise`, `rqt`, and `headless`. When a
+control panel is launched, operators home the system and enable teleoperation
+from that panel; launch files do not send those commands automatically.
