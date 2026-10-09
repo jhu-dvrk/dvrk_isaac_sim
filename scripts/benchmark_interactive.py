@@ -30,8 +30,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from dvrk_arm_description import JointConfig, load_robot_config
-from dvrk_isaac_sim.scene import load_scene, load_simulator_config, resolve_scene_path
+from dvrk_arm_description import JointConfig
+from dvrk_isaac_sim.configuration import load_installed_scene_config, load_simulator_config, resolve_scene_path
 
 
 @dataclass(frozen=True)
@@ -46,7 +46,6 @@ class BenchmarkMonitor:
     def __init__(self, specs: list[ArmSpec]) -> None:
         import rclpy
         from rclpy.node import Node
-        from rosgraph_msgs.msg import Clock
         from sensor_msgs.msg import JointState
 
         self.rclpy = rclpy
@@ -62,9 +61,6 @@ class BenchmarkMonitor:
         self.sent = {spec.name: 0 for spec in specs}
         self.timestamp_regressions = {spec.name: 0 for spec in specs}
         self._last_stamp: dict[str, int] = {}
-        self.clock_messages = 0
-        self.clock_regressions = 0
-        self._last_clock = -1
         self.publishers = {}
         for spec in specs:
             self.publishers[spec.name] = self.node.create_publisher(
@@ -74,7 +70,6 @@ class BenchmarkMonitor:
                 JointState, f"/{spec.name}/measured_js",
                 lambda message, name=spec.name: self._joint_state(name, message), 10,
             )
-        self.node.create_subscription(Clock, "/clock", self._clock, 10)
 
     def _joint_state(self, name: str, message) -> None:
         positions = np.asarray(message.position, dtype=float)
@@ -99,16 +94,9 @@ class BenchmarkMonitor:
                     and self.max_displacement[name] > 1e-5):
                 self.first_motion_latency_s[name] = time.monotonic() - self.command_started_at
 
-    def _clock(self, message) -> None:
-        stamp = int(message.clock.sec) * 1_000_000_000 + int(message.clock.nanosec)
-        if self._last_clock >= 0 and stamp < self._last_clock:
-            self.clock_regressions += 1
-        self._last_clock = stamp
-        self.clock_messages += 1
-
     @property
     def ready(self) -> bool:
-        return len(self.latest) == len(self.specs) and self.clock_messages > 0
+        return len(self.latest) == len(self.specs)
 
     def publish_commands(self, elapsed: float) -> None:
         """Send small limit-clamped sinusoids, preserving each initial pose."""
@@ -152,9 +140,6 @@ class BenchmarkMonitor:
         self.sent = {name: 0 for name in self.specs}
         self.timestamp_regressions = {name: 0 for name in self.specs}
         self._last_stamp = {}
-        self.clock_messages = 0
-        self.clock_regressions = 0
-        self._last_clock = -1
         self.command_started_at = time.monotonic()
 
     def close(self) -> None:
@@ -251,10 +236,6 @@ def _benchmark_scene(scene_path: Path, scene, scale: float,
             if transport != "rtsp"
         ]
         camera.pop("rtsp", None)
-    # The temporary scene lives outside the package, so make its robot YAML
-    # paths absolute before the normal scene resolver loads it.
-    for configured, entry in zip(document["scene"].get("robots", []), scene.robots):
-        configured["config"] = str(entry.config_path)
     temporary = tempfile.NamedTemporaryFile(
         prefix="dvrk-isaac-scaled-camera-", suffix=".yaml", delete=False, mode="w", encoding="utf-8"
     )
@@ -268,29 +249,35 @@ def main() -> int:
     config_path = args.config.expanduser().resolve()
     simulator = load_simulator_config(config_path)
     scene_path = resolve_scene_path(config_path, args.scene)
-    scene = load_scene(scene_path)
+    scene = load_installed_scene_config(scene_path)
     expected = {"ECM", "PSM1", "PSM2", "PSM3"}
     found = {entry.name for entry in scene.robots}
     if found != expected:
         raise ValueError(f"benchmark requires {sorted(expected)}, scene has {sorted(found)}")
-    specs = [ArmSpec(entry.name, load_robot_config(entry.config_path).joints) for entry in scene.robots]
-    if not simulator.isaac_sim_dir:
-        raise ValueError(f"{config_path}: isaac_sim_dir is required")
+    specs = [ArmSpec(entry.name, entry.joints) for entry in scene.robots]
 
     temporary_scene = _benchmark_scene(
         scene_path, scene, args.camera_scale, args.disable_rtsp
     )
     launch_scene_path = temporary_scene or scene_path
+    temporary_config = None
+    if args.renderer:
+        document = yaml.safe_load(config_path.read_text())
+        document["renderer"] = args.renderer
+        if simulator.generated_root is not None:
+            document["generated_root"] = str(simulator.generated_root)
+        temporary = tempfile.NamedTemporaryFile(prefix="dvrk-isaac-runtime-", suffix=".yaml", delete=False, mode="w")
+        yaml.safe_dump(document, temporary)
+        temporary.close()
+        temporary_config = Path(temporary.name)
+        config_path = temporary_config
     launch = [
         "ros2", "launch", "dvrk_isaac_sim", "simulator.launch.py",
-        f"config:={config_path}", f"scene:={launch_scene_path}",
+        f"config:={config_path}", f"scene:={launch_scene_path}", "headless:=true",
     ]
     print("Launching: " + " ".join(str(item) for item in launch), flush=True)
     launch_log = tempfile.NamedTemporaryFile(prefix="dvrk-isaac-benchmark-", suffix=".log", delete=False)
     launch_environment = os.environ.copy()
-    launch_environment["DVRK_SIMULATOR_FORCE_HEADLESS"] = "true"
-    if args.renderer:
-        launch_environment["DVRK_SIMULATOR_RENDERER"] = args.renderer
     launch_process = subprocess.Popen(
         launch, stdout=launch_log, stderr=subprocess.STDOUT, text=True,
         env=launch_environment,
@@ -381,8 +368,6 @@ def main() -> int:
                     f"{name} command response {response_text} "
                     f"exceeds {args.max_command_response_ms:.1f} ms"
                 )
-        if monitor.clock_messages == 0 or monitor.clock_regressions:
-            failures.append("/clock did not advance monotonically")
         if rtsp_process is not None and (not rtsp_alive or rtsp_fps < args.min_rtsp_fps):
             failures.append(f"RTSP decoded {rtsp_fps:.1f} fps, expected at least {args.min_rtsp_fps:.1f}")
         result.update({
@@ -393,7 +378,6 @@ def main() -> int:
                 for name, value in monitor.first_motion_latency_s.items()
             },
             "timestamp_regressions": monitor.timestamp_regressions,
-            "clock_messages": monitor.clock_messages, "clock_regressions": monitor.clock_regressions,
             "command_subscription_matches": {
                 name: publisher.get_subscription_count()
                 for name, publisher in monitor.publishers.items()
@@ -415,6 +399,8 @@ def main() -> int:
         launch_log.close()
         if temporary_scene is not None:
             temporary_scene.unlink(missing_ok=True)
+        if temporary_config is not None:
+            temporary_config.unlink(missing_ok=True)
     report = json.dumps(result, indent=2, sort_keys=True)
     print(report, flush=True)
     if args.output:

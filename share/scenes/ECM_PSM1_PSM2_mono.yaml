@@ -1,6 +1,5 @@
 scene:
   name: ECM_PSM1_PSM2_mono
-  base_frame_provider: yaml
   # SUJ Fixed defaults: frame poses are RCM/base poses in world (meters, ROS xyzw).
   # Replace these values with registered poses or use a future TF provider.
   frames:
@@ -11,21 +10,19 @@ scene:
   camera:
     mode: mono
     owner: ECM
-    frame: ECM_optical
     width: 1280
     height: 720
     horizontal_fov_deg: 60.0
     near_clip_m: 0.005
     far_clip_m: 10.0
-    encoding: rgba8
     baseline_m: 0.006
     publish_rate_hz: 30.0
     transports: [rtsp]
     rtsp: {port: 8554, mount_path: /ECM, encoding: raw}
   robots:
-    - config: package://dvrk_arm_description/arms/PSM1.yaml
+    - config: PSM1.yaml
       instrument: "420006"
-    - config: package://dvrk_arm_description/arms/PSM2.yaml
+    - config: PSM2.yaml
       instrument: "420093"
-    - config: package://dvrk_arm_description/arms/ECM.yaml
+    - config: ECM.yaml
       endoscope: "Si_straight"

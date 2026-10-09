@@ -1,11 +1,7 @@
-# Local simulator settings. Run colcon build with ISAAC_SIM_DIR set to create
-# isaac_sim.yaml with the Isaac Sim installation path for this machine.
-isaac_sim_dir: null
+# Local simulator settings. Select worker Python with DVRK_ISAAC_SIM_PYTHON
+# or set ISAAC_SIM_DIR to an Isaac installation containing python.sh.
 renderer: RaytracedLighting
 headless: false
-duration: 0.0
 simulation_rate_hz: 120.0
 render_rate_hz: 30.0
-ros_distro: jazzy
-rmw_implementation: rmw_fastrtps_cpp
 scene: null

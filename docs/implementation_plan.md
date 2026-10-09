@@ -13,7 +13,7 @@ The repository now has:
 - kinematic PSM and ECM models with FK, Jacobian, IK, Cartesian view-frame conversion, and jaws;
 - CRTK ROS 2 topics, operating-state events, QoS, `/clock`, and paused zero-stamped periodic data;
 - manifest-driven visual-only USD updates, mono/stereo ECM image publication, and GUI monitoring;
-- workspace-root `.generated/isaacsim-6.0` asset caching;
+- user-cache `~/.cache/dvrk_isaac_sim` asset caching;
 - `simulator.launch.py`, `test_scene.launch.py`, `simulator.py`, and configuration validation;
 - 16 pure-Python tests plus headless Isaac Sim scene integration tests.
 

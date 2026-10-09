@@ -58,3 +58,22 @@ def test_psm_pose_ik_reaches_orientation():
     solved = robot.compute_fk(result.position)
     np.testing.assert_allclose(solved.position, target.position, atol=1e-4)
     np.testing.assert_allclose(solved.orientation, target.orientation, atol=1e-4)
+
+
+def test_ecm_manifest_includes_endoscope_tip_transform(tmp_path):
+    import subprocess
+    from dvrk_isaac_sim.urdf_kinematics import write_kinematics_manifest
+    from ament_index_python.packages import get_package_share_directory
+
+    model = Path(get_package_share_directory('dvrk_model'))
+    urdf = tmp_path / 'ECM.urdf'
+    with urdf.open('w') as stream:
+        subprocess.run(['xacro', str(model / 'urdf/Virtual/ECM.urdf.xacro'),
+                        'endoscope:=Si_straight'], stdout=stream, check=True)
+    manifest = write_kinematics_manifest(urdf, tmp_path / 'kinematics.json', 'ECM')
+    robot = CRTKECM(load_robot_config(BASE_ARMS / 'ECM.yaml'), kinematics_manifest=manifest)
+    pose = robot.measured_cp()
+    # The scope's fixed links cancel the adaptor offset at zero insertion.
+    np.testing.assert_allclose(pose.position, [0., 0., -0.02], atol=1e-8)
+    np.testing.assert_allclose(pose.orientation[:, 0], [0., 0., -1.], atol=1e-8)
+    assert robot._urdf_chain is not None

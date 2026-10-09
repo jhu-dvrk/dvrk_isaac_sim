@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
-import math
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
 import numpy as np
+
+from dvrk_simulator_base.urdf_chain import UrdfChain
 
 
 def _numbers(value: str | None, count: int) -> list[float]:
@@ -15,31 +16,6 @@ def _numbers(value: str | None, count: int) -> list[float]:
     if len(values) != count:
         return [0.0] * count
     return values
-
-
-def _rpy_matrix(roll: float, pitch: float, yaw: float) -> np.ndarray:
-    cr, sr = math.cos(roll), math.sin(roll)
-    cp, sp = math.cos(pitch), math.sin(pitch)
-    cy, sy = math.cos(yaw), math.sin(yaw)
-    return np.array([[cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
-                     [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
-                     [-sp, cp * sr, cp * cr]])
-
-
-def _transform(rotation: np.ndarray, translation: list[float]) -> np.ndarray:
-    result = np.eye(4)
-    result[:3, :3] = rotation
-    result[:3, 3] = translation
-    return result
-
-
-def _rotation(axis: np.ndarray, angle: float) -> np.ndarray:
-    axis = axis / np.linalg.norm(axis)
-    x, y, z = axis
-    c, s = math.cos(angle), math.sin(angle)
-    return np.array([[c + x*x*(1-c), x*y*(1-c)-z*s, x*z*(1-c)+y*s],
-                     [y*x*(1-c)+z*s, c + y*y*(1-c), y*z*(1-c)-x*s],
-                     [z*x*(1-c)-y*s, z*y*(1-c)+x*s, c + z*z*(1-c)]])
 
 
 def _joint_dict(element: ET.Element) -> dict:
@@ -54,7 +30,7 @@ def _joint_dict(element: ET.Element) -> dict:
         "child": element.find("child").attrib.get("link") if element.find("child") is not None else "",
         "origin_xyz": _numbers(origin.attrib.get("xyz") if origin is not None else None, 3),
         "origin_rpy": _numbers(origin.attrib.get("rpy") if origin is not None else None, 3),
-        "axis": _numbers(axis.attrib.get("xyz") if axis is not None else None, 3),
+        "axis": _numbers(axis.attrib.get("xyz", "1 0 0") if axis is not None else "1 0 0", 3),
         "lower": float(limit.attrib["lower"]) if limit is not None and "lower" in limit.attrib else None,
         "upper": float(limit.attrib["upper"]) if limit is not None and "upper" in limit.attrib else None,
         "velocity": float(limit.attrib["velocity"]) if limit is not None and "velocity" in limit.attrib else None,
@@ -170,37 +146,14 @@ class UrdfKinematicChain:
         self.joints = tuple(manifest["joints"])
         self.active_joints = tuple(manifest["active_joints"])
 
+        self._chains = {}
+
     def forward(self, q: np.ndarray, joint_names: tuple[str, ...]) -> tuple[np.ndarray, np.ndarray]:
-        if q.shape != (len(joint_names),):
-            raise ValueError("joint position has the wrong size")
-        values = dict(zip(joint_names, q))
+        names = tuple(joint_names)
+        if names not in self._chains:
+            self._chains[names] = UrdfChain.from_manifest(self.joints, names)
+        position, rotation, jacobian = self._chains[names].forward(q)
         transform = np.eye(4)
-        axes_world, origins_world, joint_types = [], [], []
-        for joint in self.joints:
-            transform = transform @ _transform(_rpy_matrix(*joint["origin_rpy"]), joint["origin_xyz"])
-            joint_type = joint["type"]
-            if joint_type in ("revolute", "continuous", "prismatic"):
-                axis = np.asarray(joint["axis"], dtype=float)
-                if np.linalg.norm(axis) == 0.0:
-                    axis = np.array([0.0, 0.0, 1.0])
-                mimic = joint["mimic"]
-                if mimic is not None:
-                    angle = values.get(mimic["joint"], 0.0) * mimic["multiplier"] + mimic["offset"]
-                else:
-                    angle = values.get(joint["name"], 0.0)
-                    axes_world.append(transform[:3, :3] @ axis)
-                    origins_world.append(transform[:3, 3].copy())
-                    joint_types.append(joint_type)
-                if joint_type in ("revolute", "continuous"):
-                    transform = transform @ _transform(_rotation(axis, angle), [0.0, 0.0, 0.0])
-                else:
-                    transform = transform @ _transform(np.eye(3), (axis * angle).tolist())
-        position = transform[:3, 3]
-        jacobian = np.zeros((6, len(axes_world)))
-        for index, (axis, origin, joint_type) in enumerate(zip(axes_world, origins_world, joint_types)):
-            if joint_type in ("revolute", "continuous"):
-                jacobian[:3, index] = np.cross(axis, position - origin)
-                jacobian[3:, index] = axis
-            else:
-                jacobian[:3, index] = axis
+        transform[:3, :3] = rotation
+        transform[:3, 3] = position
         return transform, jacobian

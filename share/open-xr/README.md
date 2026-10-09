@@ -12,8 +12,10 @@ run:
 ros2 launch dvrk_isaac_sim open_xr.launch.py
 ```
 
-The launch uses the machine-specific `share/isaac_sim.yaml` created during the
-package build with `ISAAC_SIM_DIR` set, and forces headless mode. Override it
-with `config:=/path/to/isaac_sim.yaml` when required. Use `console:=...` to
-select the dVRK console namespace and `rqt:=true` to launch the Console,
-tabbed dVRK Arms, and diagnostics panels.
+The launch uses the portable `share/open-xr/isaac_sim.yaml` runtime profile
+and defaults to headless mode. Select Isaac Python with `DVRK_ISAAC_SIM_PYTHON`
+or `ISAAC_SIM_DIR`; interpreter selection happens when the worker starts.
+Override runtime settings with `config:=/path/to/isaac_sim.yaml` and select an
+exercise with `scene:=tray_cubes.yaml`. Use `console:=...` to select the dVRK
+console namespace and `rqt:=true` to launch the Console, tabbed Arms, and
+Diagnostics panels.
