@@ -1,6 +1,5 @@
 scene:
   name: PSM1_420006_mono
-  base_frame_provider: yaml
   frames:
     PSM1: {position: [-0.100000000, 0.000000000, 0.173205081], orientation_xyzw: [0.000000000, -0.258819045, 0.000000000, 0.965925826]}
     PSM2: {position: [0.100000000, 0.000000000, 0.173205081], orientation_xyzw: [0.000000000, 0.258819045, 0.000000000, 0.965925826]}
@@ -9,13 +8,11 @@ scene:
   camera:
     mode: mono
     owner: ECM
-    frame: ECM_optical
     width: 1280
     height: 720
     horizontal_fov_deg: 60.0
     near_clip_m: 0.005
     far_clip_m: 10.0
-    encoding: rgba8
     baseline_m: 0.006
     publish_rate_hz: 30.0
     transports: [rtsp]

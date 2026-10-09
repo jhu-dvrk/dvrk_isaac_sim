@@ -12,11 +12,10 @@ import numpy as np
 from dvrk_arm_description import RobotConfig
 from dvrk_simulator_base.cartesian_command import CartesianCommand, resolve_cartesian_command
 from dvrk_simulator_base.command_mailbox import CommandMailboxes
-from dvrk_simulator_base.operating_state import CRTKOperatingState
+from dvrk_simulator_base.arm_controller import ArmController
 from dvrk_simulator_base.publication_frames import with_publication_frames
 from dvrk_simulator_base.scene import SceneConfig, resolve_asset_uri
 from dvrk_simulator_base.snapshots import ArmSnapshot, OperatingStateSnapshot
-from dvrk_simulator_base.trajectory import JointTrajectory
 from dvrk_simulator_base.types import JointState, Pose
 
 from .camera import CameraOptions, IsaacCamera
@@ -78,7 +77,7 @@ def _setup_scene_lighting() -> None:
     dome_light.CreateIntensityAttr(500.0)
 
 
-class IsaacSimArm:
+class IsaacSimArm(ArmController):
     """Manages kinematics, visual synchronization, and command mailboxes for an arm."""
 
     def __init__(
@@ -99,27 +98,8 @@ class IsaacSimArm:
             raise ValueError(f"unsupported robot type: {config.type}")
 
         self.visual: CRTKUSDVisual | None = None
-        self.operating_state = CRTKOperatingState(CRTKOperatingState.ENABLED)
-        self.operating_state_event_pending = False
-        self.move_failure_pending = False
-        self.command_warnings: list[str] = []
-
-        self.joint_setpoint = np.array(config.home_position, dtype=float, copy=True)
-        self.joint_velocity = np.zeros_like(self.joint_setpoint)
-        self.jaw_position = 0.0
-        self.jaw_setpoint = 0.0
-        self.jaw_velocity = 0.0
-
-        jaw_raw = config.raw.get("robot", {}).get("jaw", {})
-        self.jaw_lower = float(jaw_raw.get("lower", -0.349066))
-        self.jaw_upper = float(jaw_raw.get("upper", 1.39626))
-        self.jaw_speed = float(jaw_raw.get("velocity", 0.4))
-
-        self.joint_trajectory: JointTrajectory | None = None
-        self.jaw_trajectory: JointTrajectory | None = None
-
-        self._lower_limits = np.array([j.lower for j in config.joints], dtype=float)
-        self._upper_limits = np.array([j.upper for j in config.joints], dtype=float)
+        super().__init__(config, commands)
+        self.jaw_position = self.jaw_setpoint
 
     def initialize_visual(self) -> None:
         if self.manifest_path is not None and self.manifest_path.is_file():
@@ -132,21 +112,6 @@ class IsaacSimArm:
                 self.visual.update(measured.names, measured.position,
                                    self.jaw_position if self.config.type == "PSM" else None)
 
-    def cancel_motion(self) -> None:
-        self.joint_trajectory = None
-        self.jaw_trajectory = None
-        self.joint_velocity.fill(0.0)
-        self.jaw_velocity = 0.0
-
-    def valid_joint_target(self, target: np.ndarray) -> bool:
-        if len(target) != len(self.config.joints):
-            return False
-        return bool(
-            np.all(np.isfinite(target))
-            and np.all(target >= self._lower_limits - 1e-6)
-            and np.all(target <= self._upper_limits + 1e-6)
-        )
-
     def prepare_step(
         self,
         dt: float,
@@ -155,120 +120,13 @@ class IsaacSimArm:
         *,
         has_ecm: bool = False,
     ) -> None:
-        if self.move_failure_pending:
-            self.move_failure_pending = False
-        joint_move_started = False
-        jaw_move_started = False
-
-        for command in self.commands.drain():
-            if command.channel == "state_command":
-                success, message = self.operating_state.command(command.payload)
-                if success:
-                    self.operating_state_event_pending = True
-                    if not self.operating_state.accepts_motion:
-                        self.cancel_motion()
-                else:
-                    self.command_warnings.append(
-                        f"rejected operating state command {command.payload!r}: {message}"
-                    )
-                continue
-
-            if not self.operating_state.accepts_motion:
-                if command.channel in {"move_jp", "move_cp", "jaw/move_jp", "move_jr"}:
-                    self.move_failure_pending = True
-                continue
-
-            if command.channel in {"servo_jp", "move_jp"}:
-                target = np.asarray(command.payload, dtype=float)
-                if not self.valid_joint_target(target):
-                    if command.channel == "move_jp":
-                        self.move_failure_pending = True
-                    self.command_warnings.append(f"rejected {command.channel} target outside joint limits")
-                    continue
-                if command.channel == "servo_jp":
-                    self.cancel_motion()
-                    self.joint_setpoint = target.copy()
-                    self.joint_velocity = np.zeros_like(target)
-                    self.model.servo_jp(self.joint_setpoint)
-                else:
-                    self.joint_trajectory = JointTrajectory(
-                        self.joint_setpoint,
-                        target,
-                        [j.velocity for j in self.config.joints],
-                        now,
-                    )
-                    joint_move_started = True
-                continue
-
-            if command.channel in {"servo_cp", "move_cp"}:
-                target = command.payload
-                if isinstance(target, CartesianCommand):
-                    try:
-                        target = resolve_cartesian_command(target, self.config, ecm_pose, has_ecm=has_ecm)
-                    except (TypeError, ValueError, AttributeError) as error:
-                        self.command_warnings.append(f"rejected {command.channel}: {error}")
-                        if command.channel == "move_cp":
-                            self.move_failure_pending = True
-                        continue
-                ik = self.model.compute_ik(target)
-                if not ik.success or not self.valid_joint_target(ik.position):
-                    self.command_warnings.append(f"rejected {command.channel}: IK failed or joint limits exceeded")
-                    if command.channel == "move_cp":
-                        self.move_failure_pending = True
-                    continue
-                if command.channel == "servo_cp":
-                    self.cancel_motion()
-                    self.joint_setpoint = np.array(ik.position, dtype=float, copy=True)
-                    self.joint_velocity = np.zeros_like(self.joint_setpoint)
-                    self.model.servo_jp(self.joint_setpoint)
-                else:
-                    self.joint_trajectory = JointTrajectory(
-                        self.joint_setpoint,
-                        ik.position,
-                        [j.velocity for j in self.config.joints],
-                        now,
-                    )
-                    joint_move_started = True
-                continue
-
-            if command.channel in {"jaw/servo_jp", "jaw/move_jp", "servo_jr", "move_jr"}:
-                target = float(command.payload)
-                if not np.isfinite(target) or not (self.jaw_lower - 1e-6 <= target <= self.jaw_upper + 1e-6):
-                    if "move" in command.channel:
-                        self.move_failure_pending = True
-                    continue
-                if "servo" in command.channel:
-                    self.jaw_trajectory = None
-                    self.jaw_setpoint = target
-                    self.jaw_position = target
-                    self.jaw_velocity = 0.0
-                else:
-                    self.jaw_setpoint = target
-                    self.jaw_trajectory = JointTrajectory(
-                        np.array([self.jaw_position]),
-                        np.array([target]),
-                        [self.jaw_speed],
-                        now,
-                    )
-                    jaw_move_started = True
-                continue
-
-        if self.joint_trajectory is not None and not joint_move_started:
-            sample = self.joint_trajectory.sample(now)
-            self.joint_setpoint = sample.position.copy()
-            self.joint_velocity = sample.velocity.copy()
-            self.model.servo_jp(self.joint_setpoint)
-            if sample.complete:
-                self.joint_trajectory = None
-                self.joint_velocity.fill(0.0)
-
-        if self.jaw_trajectory is not None and not jaw_move_started:
-            jaw_sample = self.jaw_trajectory.sample(now)
-            self.jaw_position = float(jaw_sample.position[0])
-            self.jaw_velocity = float(jaw_sample.velocity[0])
-            if jaw_sample.complete:
-                self.jaw_trajectory = None
-                self.jaw_velocity = 0.0
+        self.advance_commands(
+            now, lambda target, seed: self.model.compute_ik(target),
+            lambda target: resolve_cartesian_command(target, self.config, ecm_pose, has_ecm=has_ecm),
+            measured_position=self.model.measured_js().position,
+        )
+        self.model.servo_jp(self.joint_setpoint)
+        self.jaw_position = self.jaw_setpoint
 
         self.model.step(dt)
 

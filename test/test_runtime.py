@@ -133,3 +133,13 @@ def test_render_rate_and_camera_pose_order(monkeypatch):
         runtime.step()
     assert events == ["pose", "render", "capture"] * 3
     assert runtime._simulation_time == pytest.approx(0.1)
+
+
+def test_arm_servo_preserves_independent_jaw_move():
+    arm = IsaacSimArm(_psm1_robot(), CommandMailboxes(), manifest_path=None)
+    arm.commands.submit_discrete("jaw/move_jp", 0.5)
+    arm.prepare_step(1.0 / 120.0, 1.0)
+    assert arm.jaw_trajectory is not None
+    arm.commands.submit_servo("servo_jp", arm.config.home_position)
+    arm.prepare_step(1.0 / 120.0, 1.01)
+    assert arm.jaw_trajectory is not None

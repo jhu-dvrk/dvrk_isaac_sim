@@ -8,33 +8,12 @@ from typing import Iterable
 
 import numpy as np
 
+from dvrk_simulator_base.rotations import rpy_matrix, axis_rotation
+
 from dvrk_arm_description import RobotConfig
 from dvrk_simulator_base.rotations import quaternion_matrix_xyzw as _quaternion_matrix_xyzw
 from dvrk_simulator_base.types import IKResult, JointState, Pose, Twist
 from .urdf_kinematics import UrdfKinematicChain
-
-
-def _rpy_matrix(roll: float, pitch: float, yaw: float) -> np.ndarray:
-    cr, sr = math.cos(roll), math.sin(roll)
-    cp, sp = math.cos(pitch), math.sin(pitch)
-    cy, sy = math.cos(yaw), math.sin(yaw)
-    return np.array([
-        [cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
-        [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
-        [-sp, cp * sr, cp * cr],
-    ])
-
-
-
-def _rotation(axis: np.ndarray, angle: float) -> np.ndarray:
-    axis = axis / np.linalg.norm(axis)
-    x, y, z = axis
-    c, s = math.cos(angle), math.sin(angle)
-    return np.array([
-        [c + x * x * (1 - c), x * y * (1 - c) - z * s, x * z * (1 - c) + y * s],
-        [y * x * (1 - c) + z * s, c + y * y * (1 - c), y * z * (1 - c) - x * s],
-        [z * x * (1 - c) - y * s, z * y * (1 - c) + x * s, c + z * z * (1 - c)],
-    ])
 
 
 def _transform(rotation: np.ndarray, translation: Iterable[float]) -> np.ndarray:
@@ -70,7 +49,7 @@ class CRTKComponent:
         self._joint_origins = self._make_joint_origins()
         self._joint_axes_cache = self._joint_axes()
         self._joint_origin_transforms = tuple(
-            _transform(_rpy_matrix(*origin_rpy), origin_xyz)
+            _transform(rpy_matrix(*origin_rpy), origin_xyz)
             for origin_xyz, origin_rpy in self._joint_origins
         )
         self._base_rotation = _quaternion_matrix_xyzw(
@@ -122,7 +101,7 @@ class CRTKComponent:
             origins_world.append(transform[:3, 3].copy())
             axes_world.append(transform[:3, :3] @ axis)
             if joint_type == "revolute":
-                transform = transform @ _transform(_rotation(axis, q[index]), [0.0, 0.0, 0.0])
+                transform = transform @ _transform(axis_rotation(axis, q[index]), [0.0, 0.0, 0.0])
             else:
                 transform = transform @ _transform(np.eye(3), axis * q[index])
 

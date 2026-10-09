@@ -1,6 +1,5 @@
 scene:
   name: ECM_PSM1_PSM2_PSM3_stereo_rtsp
-  base_frame_provider: yaml
   # SUJ Fixed defaults: frame poses are RCM/base poses in world (meters, ROS xyzw).
   # This Quest-specific scene renders only the tiled RTSP product.  The robot
   # state and command interfaces continue to use ROS 2.
@@ -12,13 +11,11 @@ scene:
   camera:
     mode: stereo
     owner: ECM
-    frame: ECM_optical
     width: 1280
     height: 720
     horizontal_fov_deg: 60.0
     near_clip_m: 0.005
     far_clip_m: 10.0
-    encoding: rgba8
     baseline_m: 0.006
     publish_rate_hz: 30.0
     transports: [rtsp]
