@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <package format="3">
   <name>dvrk_isaac_sim</name>
-  <version>0.0.1</version>
+  <version>0.1.0</version>
   <description>ROS 2 and Isaac Sim kinematic simulation for dVRK PSMs and ECMs.</description>
   <maintainer email="anton.deguet@jhu.edu">Anton Deguet</maintainer>
   <license>Apache-2.0</license>

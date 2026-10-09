@@ -322,8 +322,3 @@ class CRTKECM(CRTKComponent):
             np.array([0.0, 0.0, 1.0]),
             np.array([0.0, 0.0, 1.0]),
         )
-
-
-def main() -> None:
-    """Small integration-test entry point installed with the ROS 2 package."""
-    print("dvrk_isaac_sim kinematic core is available; launch integration is not implemented yet")

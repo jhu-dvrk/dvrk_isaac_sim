@@ -15,14 +15,18 @@ from dvrk_simulator_base.python_runtime import (
 )
 
 
+from dvrk_simulator_base.urdf_materializer import (
+    default_generated_root as _default_generated_root,
+)
+
+
 class IsaacSimPython(SimulatorPython):
     pass
 
 
 def default_generated_root() -> Path:
     """Return the user cache directory for Isaac Sim artifacts."""
-    cache_root = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
-    return (cache_root / "dvrk_isaac_sim").resolve()
+    return _default_generated_root("dvrk_isaac_sim")
 
 
 def _imports_isaac_sim(python: Path) -> bool:
