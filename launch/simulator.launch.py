@@ -61,7 +61,7 @@ def _start_sim(context):
 
     conversion_commands = []
     converter = package_share / "scripts" / "convert_dvrk_model.py"
-    collision_profile = package_share / "share/collision_primitives/instrument_hybrid.yaml"
+    collision_profile = package_share / "share/collision_primitives/instrument_collision.yaml"
 
     def ensure_asset(robot):
         variant = (robot.instrument or "420006" if robot.type == "PSM"
@@ -160,7 +160,7 @@ def generate_launch_description():
         DeclareLaunchArgument("renderer", default_value="",
                               description="Optional renderer override"),
         DeclareLaunchArgument("collision_backend", default_value="",
-                      description="Collision backend: none, kinematic_guard, or newton (Newton uses profiled PSM hybrid colliders)"),
+                      description="Collision backend: none, kinematic_guard, or newton (Newton uses profiled PSM colliders)"),
         DeclareLaunchArgument("newton_device", default_value="auto",
                   description="Newton device: auto, cpu or cuda:0"),
         DeclareLaunchArgument("newton_python", default_value="",

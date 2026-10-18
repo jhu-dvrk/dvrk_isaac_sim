@@ -25,7 +25,7 @@ Use `scripts/run_dvrk_full.sh --env NAME` to select an environment, for example
 
 ## Collision Asset Generation
 
-Newton ROS launches use an offline hybrid collision profile: one shaft cylinder
+Newton ROS launches use an offline collision profile: one shaft cylinder
 and per-link convex decomposition for wrists and jaws. Decomposition uses
 **V-HACD through [vhacdx 0.0.10](https://github.com/trimesh/vhacdx)**, not the
 Unity package. V-HACD's upstream project is

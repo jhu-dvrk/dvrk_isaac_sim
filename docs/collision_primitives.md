@@ -1,8 +1,8 @@
 # Instrument Collision Generation
 
-## Default Hybrid Profile
+## Default Collision Profile
 
-Newton ROS launches select `share/collision_primitives/instrument_hybrid.yaml`.
+Newton ROS launches select `share/collision_primitives/instrument_collision.yaml`.
 It fits one cylinder to the shaft and uses V-HACD through `vhacdx==0.0.10`
 to decompose each wrist and jaw visual mesh independently. `trimesh==5.1.1`
 loads the OBJ triangles. Install `requirements-collision.txt` in the isolated
@@ -10,7 +10,7 @@ Newton Python environment, or select it using `DVRK_COLLISION_PYTHON`.
 This uses the standalone V-HACD algorithm, not Unity's VHACD integration.
 
 ```bash
-ros2 run dvrk_isaac_sim convert_dvrk_model.py --model PSM2 --instrument 420093 --collision-profile /path/to/dvrk_isaac_sim/share/collision_primitives/instrument_hybrid.yaml --require-instrument-collisions --force
+ros2 run dvrk_isaac_sim convert_dvrk_model.py --model PSM2 --instrument 420093 --collision-profile /path/to/dvrk_isaac_sim/share/collision_primitives/instrument_collision.yaml --require-instrument-collisions --force
 ```
 
 For `fit: vhacd`, `max_hulls` bounds the hull count per visual mesh,
@@ -50,7 +50,7 @@ Useful rule fields:
 - `slices`: split a cylinder fit along the fit axis.
 - `margin`: inflate the cylinder in meters.
 
-To tune visually in Isaac Sim, edit the hybrid profile, regenerate the asset with
+To tune visually in Isaac Sim, edit the collision profile, regenerate the asset with
 `--force`, and inspect the red collision prims under
 `/World/<PSM>/PhysicsLinks`. Adjust `margin` for shaft contact clearance or the
 V-HACD hull budgets for wrist and jaw contact coverage.

@@ -111,7 +111,7 @@ collision_primitives:
     assert all(item["primitive_profile"] == "roll_test" for item in items)
 
 
-def test_instrument_collision_check_requires_hybrid_profiled_links():
+def test_instrument_collision_check_requires_profiled_links():
     manifest = {
         "collision": {
             "items": [

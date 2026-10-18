@@ -70,13 +70,13 @@ assets must already contain the desired collision geometry:
 
 ## Implementation and limits
 
-The ROS launch path requests the hybrid instrument collision profile when
+The ROS launch path requests the instrument collision profile when
 generating PSM assets for Newton. A mesh-only or stale cached PSM asset is
 regenerated; launch fails rather than silently starting Newton unless roll,
 wrist pitch, wrist yaw, and both jaw links all contain generated collision
 coverage. The default profile fits one cylinder to the roll shaft and uses
 V-HACD convex decomposition for the wrist and jaws. Edit
-`share/collision_primitives/instrument_hybrid.yaml` to tune the active Newton
+`share/collision_primitives/instrument_collision.yaml` to tune the active Newton
 profile. The converter rewrites only the generated cache, not source meshes.
 
 Newton imports the resulting flattened `PhysicsLinks` subtrees and environment

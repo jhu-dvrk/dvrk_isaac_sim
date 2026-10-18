@@ -299,7 +299,7 @@ def main() -> int:
     parser.add_argument("--merge-fixed-joints", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--fix-base", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--collision-from-visuals", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--collision-profile", type=Path, help="hybrid primitive/V-HACD collision profile")
+    parser.add_argument("--collision-profile", type=Path, help="instrument collision profile")
     parser.add_argument("--require-instrument-collisions", action="store_true")
     parser.add_argument("--force", action="store_true", help="replace an existing generated asset for this model")
     parser.add_argument(
