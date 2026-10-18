@@ -1,6 +1,8 @@
 import importlib.util
+import json
 from pathlib import Path
 import sys
+import pytest
 import xml.etree.ElementTree as ET
 
 
@@ -10,6 +12,48 @@ _SPEC = importlib.util.spec_from_file_location("convert_dvrk_model", _SCRIPT)
 assert _SPEC is not None and _SPEC.loader is not None
 _MODULE = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_MODULE)
+
+
+def test_failed_asset_build_keeps_previous_asset(tmp_path):
+  destination = tmp_path / "PSM1_420006"
+  destination.mkdir()
+  (destination / "old.usda").write_text("previous")
+  with pytest.raises(RuntimeError, match="conversion failed"):
+    with _MODULE._asset_build_directory(tmp_path, destination.name, True) as staging:
+      (staging / "partial.usda").write_text("partial")
+      raise RuntimeError("conversion failed")
+  assert (destination / "old.usda").read_text() == "previous"
+  assert not (destination / "partial.usda").exists()
+
+
+def test_successful_asset_build_publishes_only_complete_asset(tmp_path):
+  destination = tmp_path / "PSM1_420006"
+  destination.mkdir()
+  (destination / "old.usda").write_text("previous")
+  with _MODULE._asset_build_directory(tmp_path, destination.name, True) as staging:
+    (staging / "new.usda").write_text("complete")
+    assert (destination / "old.usda").exists()
+  assert (destination / "new.usda").read_text() == "complete"
+  assert not (destination / "old.usda").exists()
+
+
+def test_strip_physics_handles_binary_usd_layers(tmp_path):
+  pytest.importorskip("pxr")
+  from pxr import Usd, UsdGeom, UsdPhysics
+
+  path = tmp_path / "geometry.usd"
+  stage = Usd.Stage.CreateNew(str(path))
+  shape = UsdGeom.Mesh.Define(stage, "/Shape")
+  UsdPhysics.CollisionAPI.Apply(shape.GetPrim())
+  UsdPhysics.MeshCollisionAPI.Apply(shape.GetPrim()).CreateApproximationAttr().Set("convexHull")
+  stage.GetRootLayer().Save()
+  assert path.read_bytes().startswith(b"PXR-USDC")
+
+  _MODULE._strip_physics(str(path))
+
+  assert not shape.GetPrim().HasAPI(UsdPhysics.CollisionAPI)
+  assert shape.GetPrim().HasAPI(UsdPhysics.MeshCollisionAPI)
+  assert path.read_bytes().startswith(b"PXR-USDC")
 
 
 def test_strip_physics_api_schemas_retains_mesh_collision_api():
@@ -95,3 +139,49 @@ def test_normalize_geometric_collision_meshes_handles_stl_counterpart(tmp_path: 
     mesh = ET.parse(urdf).getroot().find("link/collision/geometry/mesh")
     assert mesh is not None
     assert mesh.attrib["filename"].endswith("/wrist_pitch_0091_collision_geometric.STL")
+
+
+def test_collision_mesh_source_links_only_reports_mesh_entries(tmp_path: Path):
+    manifest = tmp_path / "kinematics.json"
+    manifest.write_text(
+        json.dumps({
+            "collision": {
+                "items": [
+                    {"source_link": "PSM1_roll_link", "geometry": {"type": "mesh"}},
+                    {"source_link": "PSM1_jaw_1_link", "geometry": {"type": "box"}},
+                    {"source_link": "", "geometry": {"type": "mesh"}},
+                ]
+            }
+        }),
+        encoding="utf-8",
+    )
+
+    assert _MODULE._collision_mesh_source_links(manifest) == {"PSM1_roll_link"}
+
+
+def test_strip_collision_elements_removes_only_selected_links(tmp_path: Path):
+    urdf = tmp_path / "PSM1.urdf"
+    urdf.write_text(
+        """<robot name="test">
+  <link name="PSM1_roll_link">
+    <visual/>
+    <collision name="remove_a"/>
+    <collision name="remove_b"/>
+  </link>
+  <link name="PSM1_jaw_1_link">
+    <visual/>
+    <collision name="keep"/>
+  </link>
+</robot>
+""",
+        encoding="utf-8",
+    )
+
+    assert _MODULE._strip_collision_elements(urdf, {"PSM1_roll_link"}) == 2
+
+    root = ET.parse(urdf).getroot()
+    roll = root.find("link[@name='PSM1_roll_link']")
+    jaw = root.find("link[@name='PSM1_jaw_1_link']")
+    assert roll is not None and roll.findall("collision") == []
+    assert jaw is not None
+    assert [collision.attrib["name"] for collision in jaw.findall("collision")] == ["keep"]

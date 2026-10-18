@@ -9,6 +9,7 @@ from typing import Iterable
 import numpy as np
 
 from .config import RobotConfig
+from .jaw_control import JawPIDController, jaw_controller_from_config
 from .kinematics import CRTKECM, CRTKPSM, CRTKComponent, Pose
 
 
@@ -32,7 +33,8 @@ class CRTKROSComponent:
 
     def __init__(self, node, config: RobotConfig, model: CRTKComponent,
                  simulation_stamp=None,
-                 component_lock: threading.RLock | None = None):
+                 component_lock: threading.RLock | None = None,
+                 jaw_controller: JawPIDController | None = None):
         from crtk_msgs.msg import OperatingState, StringStamped
         from geometry_msgs.msg import PoseStamped, TwistStamped
         from sensor_msgs.msg import JointState
@@ -53,8 +55,11 @@ class CRTKROSComponent:
         jaw_config = config.raw.get("robot", {}).get("jaw", {})
         self._jaw_lower = float(jaw_config.get("lower", -0.349066))
         self._jaw_upper = float(jaw_config.get("upper", 1.39626))
-        self._jaw_position = 0.0
-        self._jaw_velocity = 0.0
+        self._jaw_controller = (
+            jaw_controller
+            if jaw_controller is not None
+            else jaw_controller_from_config(config)
+        )
         self._frame_id = str(config.raw.get("robot", {}).get("cartesian", {}).get("reference_frame", config.parent_frame))
         self._cartesian_reference: CRTKComponent | None = None
         self._simulation_stamp = simulation_stamp
@@ -306,7 +311,12 @@ class CRTKROSComponent:
     @property
     def jaw_position(self) -> float | None:
         """Current logical PSM jaw position in radians."""
-        return self._jaw_position if self._has_jaw else None
+        return self._jaw_controller.state.position if self._has_jaw else None
+
+    @property
+    def jaw_setpoint(self) -> float | None:
+        """Current commanded logical PSM jaw target in radians."""
+        return self._jaw_controller.state.commanded_target if self._has_jaw else None
 
     def command_metrics(self) -> tuple[int, int, int, int, float | None]:
         """Return cumulative receive/apply counters for latency diagnostics."""
@@ -344,9 +354,13 @@ class CRTKROSComponent:
                 f"expected [{self._jaw_lower}, {self._jaw_upper}] radians"
             )
             return False
-        self._jaw_position = value
-        self._jaw_velocity = 0.0
+        self._jaw_controller.set_command(value)
         return True
+
+    def step_jaw(self, dt: float) -> None:
+        """Advance the logical jaw controller by one simulation interval."""
+        if self._has_jaw:
+            self._jaw_controller.step(dt)
 
     @property
     def operating_state(self) -> str:
@@ -368,6 +382,8 @@ class CRTKROSComponent:
             return False
         if self._operating_state.state in (CRTKOperatingState.DISABLED, CRTKOperatingState.FAULT):
             self.model.move_jp(self.model.measured_js().position)
+            if self._has_jaw:
+                self._jaw_controller.hold()
         self._publish_operating_state(self._event_stamp())
         self._publish_info(f"state is now {self._operating_state.state}")
         return True
@@ -409,6 +425,8 @@ class CRTKROSComponent:
             return
         if self._operating_state.state in (CRTKOperatingState.DISABLED, CRTKOperatingState.FAULT):
             self.model.move_jp(self.model.measured_js().position)
+            if self._has_jaw:
+                self._jaw_controller.hold()
         self._publish_operating_state(self._event_stamp())
         state_text = f"state is now {self._operating_state.state}"
         self._publish_info(state_text)
@@ -425,8 +443,8 @@ class CRTKROSComponent:
             self._command_rejected()
             self.node.get_logger().warning(f"{self.config.name} rejected jaw/servo_jp: {error}")
             return
-        # The virtual instrument has no jaw dynamics. Keep a single logical jaw
-        # position and report it immediately as both measured and setpoint state.
+        # Jaw commands set the logical target; the control loop advances the
+        # bounded jaw controller and publishes measured state separately.
         if self.command_jaw_position(position):
             self._command_applied(received_at)
         else:
@@ -531,14 +549,25 @@ class CRTKROSComponent:
     def _publish_jaw_state(self, stamp) -> None:
         if not self._has_jaw:
             return
-        for publisher in (self.jaw_measured_js_publisher, self.jaw_setpoint_js_publisher):
-            jaw = self._JointState()
-            jaw.header.stamp = stamp
-            jaw.header.frame_id = self._frame_id
-            jaw.name = ["jaw"]
-            jaw.position = [self._jaw_position]
-            jaw.velocity = [self._jaw_velocity]
-            publisher.publish(jaw)
+        state = self._jaw_controller.state
+
+        measured = self._JointState()
+        measured.header.stamp = stamp
+        measured.header.frame_id = self._frame_id
+        measured.name = ["jaw"]
+        measured.position = [state.position]
+        measured.velocity = [state.velocity]
+        measured.effort = [state.effort]
+        self.jaw_measured_js_publisher.publish(measured)
+
+        setpoint = self._JointState()
+        setpoint.header.stamp = stamp
+        setpoint.header.frame_id = self._frame_id
+        setpoint.name = ["jaw"]
+        setpoint.position = [state.commanded_target]
+        setpoint.velocity = [0.0]
+        setpoint.effort = [0.0]
+        self.jaw_setpoint_js_publisher.publish(setpoint)
 
     def _publish_operating_state(self, stamp, only_on_change: bool = False,
                                  busy_override: bool | None = None) -> None:

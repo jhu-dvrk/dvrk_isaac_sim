@@ -1,0 +1,2 @@
+vhacdx==0.0.10
+trimesh==5.1.1

@@ -153,6 +153,9 @@ data_files = [
     (f"share/{package_name}/share/environments", [
         str(path) for path in sorted(Path("share/environments").glob("*.yaml"))
     ]),
+    (f"share/{package_name}/share/collision_primitives", [
+        str(path) for path in sorted(Path("share/collision_primitives").glob("*.yaml"))
+    ]),
     (f"share/{package_name}/share/dvrk_systems", [
         str(path) for path in sorted(Path("share/dvrk_systems").glob("*.json"))
     ]),

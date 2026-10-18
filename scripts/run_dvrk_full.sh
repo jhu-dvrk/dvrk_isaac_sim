@@ -38,10 +38,22 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ "${ENVIRONMENT}" != */* ]]; then
+  if [[ ! -f "${ENVIRONMENTS_DIR}/${ENVIRONMENT}" && ! -f "${ENVIRONMENTS_DIR}/${ENVIRONMENT}.yaml" ]]; then
+    echo "Unknown environment: ${ENVIRONMENT}" >&2
+    usage >&2
+    exit 2
+  fi
+elif [[ ! -f "${ENVIRONMENT}" ]]; then
+  echo "Environment file not found: ${ENVIRONMENT}" >&2
+  exit 2
+fi
+
 export ROS_DISTRO=jazzy
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 export ISAAC_SIM_DIR="${HOME}/isaacsim"
 export DVRK_MODEL_PATH="${HOME}/dvrk_ws/src/dvrk/dvrk_model"
+export PYTHONPATH="${SCRIPT_DIR}/..:${PYTHONPATH:-}"
 
 unset AMENT_TRACE_SETUP_FILES
 
@@ -106,4 +118,4 @@ gnome-terminal --title="Haply System" -- bash -lc '
   ros2 run dvrk_robot dvrk_system -j "$HOME/dvrk_ws/src/dvrk/dvrk_isaac_sim/share/dvrk_systems/system-MTMR-PSM1-Haply-ROS.json"
 '
 
-echo "Opened Isaac Sim (environment: ${ENVIRONMENT}) and Haply terminals after cleaning stale processes."
+echo "Opened Isaac Sim with Newton (environment: ${ENVIRONMENT}) and Haply terminals."

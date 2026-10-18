@@ -24,6 +24,7 @@ class SimulatorConfig:
     ros_distro: str
     rmw_implementation: str
     scene: str | None
+    collision_backend: str
 
 
 @dataclass(frozen=True)
@@ -173,6 +174,11 @@ def load_simulator_config(path: str | Path) -> SimulatorConfig:
     render_rate_hz = float(value("render_rate_hz", 30.0))
     if render_rate_hz <= 0.0:
         raise ValueError(f"{source}: render_rate_hz must be positive")
+    collision_backend = str(value("collision_backend", "newton"))
+    if collision_backend not in {"none", "kinematic_guard", "newton"}:
+        raise ValueError(
+            f"{source}: collision_backend must be none, kinematic_guard, or newton"
+        )
     return SimulatorConfig(
         path=source,
         isaac_sim_dir=path_value("isaac_sim_dir"),
@@ -185,6 +191,7 @@ def load_simulator_config(path: str | Path) -> SimulatorConfig:
         ros_distro=str(value("ros_distro", "jazzy")),
         rmw_implementation=str(value("rmw_implementation", "rmw_fastrtps_cpp")),
         scene=str(value("scene")) if value("scene") not in (None, "") else None,
+        collision_backend=collision_backend,
     )
 
 

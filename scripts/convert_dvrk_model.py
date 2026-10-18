@@ -4,9 +4,10 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack, contextmanager
+import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -14,7 +15,12 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 
 from _isaac_sim_build import require_isaac_sim_build
+from dvrk_isaac_sim.collision_primitives import (
+    apply_collision_profile,
+    has_instrument_collisions,
+)
 from dvrk_isaac_sim.urdf_kinematics import write_kinematics_manifest
+from dvrk_isaac_sim.urdf_utils import package_mesh_path as _package_mesh_path
 
 require_isaac_sim_build(__file__)
 
@@ -28,6 +34,26 @@ def _default_output() -> Path:
 
 
 DEFAULT_OUTPUT = _default_output()
+
+
+@contextmanager
+def _asset_build_directory(output_dir, asset_name, force):
+    destination = output_dir / asset_name
+    if destination.exists() and not force:
+        raise RuntimeError(f"Generated asset already exists; use --force to replace it: {destination}")
+    with tempfile.TemporaryDirectory(prefix=f".{asset_name}-", dir=output_dir) as temporary:
+        staging = Path(temporary) / asset_name
+        staging.mkdir()
+        yield staging
+        backup = Path(temporary) / "previous"
+        if destination.exists():
+            destination.rename(backup)
+        try:
+            staging.rename(destination)
+        except BaseException:
+            if backup.exists():
+                backup.rename(destination)
+            raise
 
 
 def _strip_physics_api_schemas(line: str) -> str | None:
@@ -70,13 +96,6 @@ def _model_root() -> Path:
         if (candidate / "urdf").is_dir():
             return candidate
     raise RuntimeError(f"Could not locate dvrk_model/urdf below ROS prefix: {prefix_path}")
-
-
-def _package_mesh_path(model_root: Path, filename: str) -> Path | None:
-    prefix = "package://dvrk_model/"
-    if not filename.startswith(prefix):
-        return None
-    return model_root / filename[len(prefix):]
 
 
 def _package_mesh_name(model_root: Path, mesh_path: Path) -> str:
@@ -183,6 +202,41 @@ def _normalize_geometric_collision_meshes(urdf_path: Path, model_root: Path) -> 
     return updated
 
 
+def _collision_mesh_source_links(manifest_path: Path) -> set[str]:
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    collision = manifest.get("collision") if isinstance(manifest, dict) else None
+    if not isinstance(collision, dict):
+        return set()
+    links: set[str] = set()
+    for item in collision.get("items", []):
+        if not isinstance(item, dict):
+            continue
+        geometry = item.get("geometry")
+        if not isinstance(geometry, dict) or geometry.get("type") != "mesh":
+            continue
+        link = str(item.get("source_link", "")).strip()
+        if link:
+            links.add(link)
+    return links
+
+
+def _strip_collision_elements(urdf_path: Path, source_links: set[str]) -> int:
+    if not source_links:
+        return 0
+    tree = ET.parse(urdf_path)
+    root = tree.getroot()
+    removed = 0
+    for link in root.findall("link"):
+        if link.attrib.get("name", "") not in source_links:
+            continue
+        for collision in list(link.findall("collision")):
+            link.remove(collision)
+            removed += 1
+    if removed:
+        tree.write(urdf_path, encoding="utf-8", xml_declaration=True)
+    return removed
+
+
 def _expand_xacro(args: argparse.Namespace, xacro_path: Path, output: Path) -> None:
     command = [args.xacro, str(xacro_path)]
     if args.model.startswith("PSM"):
@@ -202,12 +256,17 @@ def _expand_xacro(args: argparse.Namespace, xacro_path: Path, output: Path) -> N
 
 def _strip_physics(usd_path: str) -> None:
     """Remove authored Physics schemas from a visual-only kinematic asset."""
+    from pxr import Sdf
+
     removed = 0
     asset_root = Path(usd_path).parent
     for layer_path in asset_root.rglob("*.usd*"):
         if layer_path.suffix not in {".usd", ".usda"}:
             continue
-        source = layer_path.read_text(encoding="utf-8")
+        layer = Sdf.Layer.FindOrOpen(str(layer_path))
+        if layer is None:
+            raise RuntimeError(f"Cannot open generated USD layer: {layer_path}")
+        source = layer.ExportToString()
         original = source
         if layer_path == Path(usd_path):
             source = source.replace('string Physics = "physx"', 'string Physics = "none"')
@@ -219,8 +278,10 @@ def _strip_physics(usd_path: str) -> None:
                 removed += 1
                 continue
             filtered.append(stripped_line)
-        if len(filtered) != len(lines) or source != original:
-            layer_path.write_text("".join(filtered), encoding="utf-8")
+        if "".join(filtered) != original:
+            if not layer.ImportFromString("".join(filtered)):
+                raise RuntimeError(f"Cannot update generated USD layer: {layer_path}")
+            layer.Save()
     print(f"Removed {removed} Physics schemas for kinematic mode", flush=True)
 
 
@@ -238,6 +299,8 @@ def main() -> int:
     parser.add_argument("--merge-fixed-joints", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--fix-base", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--collision-from-visuals", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--collision-profile", type=Path, help="hybrid primitive/V-HACD collision profile")
+    parser.add_argument("--require-instrument-collisions", action="store_true")
     parser.add_argument("--force", action="store_true", help="replace an existing generated asset for this model")
     parser.add_argument(
         "--keep-physics",
@@ -258,19 +321,29 @@ def main() -> int:
         raise RuntimeError(f"Xacro file not found: {xacro_path}")
     output_dir = args.output_dir.expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    asset_dir = output_dir / asset_name
-    if asset_dir.exists():
-        if not args.force:
-            raise RuntimeError(f"Generated asset already exists; use --force to replace it: {asset_dir}")
-        shutil.rmtree(asset_dir)
-
-    with tempfile.TemporaryDirectory(prefix="dvrk_isaac_sim_") as temporary:
+    with ExitStack() as build, tempfile.TemporaryDirectory(prefix="dvrk_isaac_sim_") as temporary:
+        asset_dir = build.enter_context(_asset_build_directory(output_dir, asset_name, args.force))
         urdf_path = Path(temporary) / f"{args.model}.urdf"
         _expand_xacro(args, xacro_path, urdf_path)
         normalized = _normalize_geometric_collision_meshes(urdf_path, root)
         if normalized:
             print(f"Normalized {normalized} geometric collision mesh references/frames", flush=True)
         manifest_path = write_kinematics_manifest(urdf_path, asset_dir / "kinematics.json", args.model)
+        if args.collision_profile is not None:
+            original_mesh_links = _collision_mesh_source_links(manifest_path)
+            replaced = apply_collision_profile(manifest_path, urdf_path, root, args.collision_profile)
+            retained_mesh_links = _collision_mesh_source_links(manifest_path)
+            stripped = _strip_collision_elements(urdf_path, original_mesh_links - retained_mesh_links)
+            print(
+                f"Replaced {replaced} collision mesh entries using collision profile {args.collision_profile}",
+                flush=True,
+            )
+            if stripped:
+                print(f"Stripped {stripped} unused URDF collision mesh elements before USD import", flush=True)
+        if args.require_instrument_collisions:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if not has_instrument_collisions(manifest):
+                raise RuntimeError(f"{manifest_path}: missing generated collisions for one or more instrument links")
         print(f"Generated kinematics manifest {manifest_path}", flush=True)
         from isaacsim import SimulationApp
 
@@ -292,8 +365,17 @@ def main() -> int:
             if not args.keep_physics:
                 _strip_physics(output_usd)
             print(f"Generated {output_usd}", flush=True)
+            build.close()
+            print(f"Published generated asset {output_dir / asset_name}", flush=True)
+        except BaseException:
+            import traceback
+
+            traceback.print_exc()
+            sys.stderr.flush()
+            simulation_app.set_setting("/app/fastShutdown", False)
+            raise
         finally:
-            simulation_app.close()
+            simulation_app.close(skip_cleanup=False)
     return 0
 
 

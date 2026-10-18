@@ -1,0 +1,42 @@
+scene:
+  name: match_row
+  base_frame_provider: yaml
+  camera:
+    mode: "off"
+    owner: ECM
+
+  props:
+    - name: match_table
+      kind: table
+      position: [0.0, 0.0, -0.025]
+      orientation_xyzw: [0.0, 0.0, 0.0, 1.0]
+      size: [0.8, 0.8, 0.08]
+      static: true
+      color: [0.82, 0.84, 0.82, 1.0]
+
+    - name: match_left
+      kind: cube
+      position: [-0.035, 0.0, 0.017]
+      orientation_xyzw: [0.0, 0.0, 0.0, 1.0]
+      size: [0.004, 0.055, 0.004]
+      dynamic: true
+      mass: 0.0003
+      color: [0.93, 0.72, 0.43, 1.0]
+
+    - name: match_center
+      kind: cube
+      position: [0.0, 0.0, 0.017]
+      orientation_xyzw: [0.0, 0.0, 0.0, 1.0]
+      size: [0.004, 0.055, 0.004]
+      dynamic: true
+      mass: 0.0003
+      color: [0.93, 0.72, 0.43, 1.0]
+
+    - name: match_right
+      kind: cube
+      position: [0.035, 0.0, 0.017]
+      orientation_xyzw: [0.0, 0.0, 0.0, 1.0]
+      size: [0.004, 0.055, 0.004]
+      dynamic: true
+      mass: 0.0003
+      color: [0.93, 0.72, 0.43, 1.0]

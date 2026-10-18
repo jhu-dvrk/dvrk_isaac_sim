@@ -113,6 +113,15 @@ def test_primitive_geometry_accepts_roll_cylinder_manifest_item():
     assert _primitive_geometry({"geometry": {"type": "mesh"}}) is None
 
 
+def test_primitive_geometry_accepts_capsule_manifest_item():
+    item = {
+        "source_link": "PSM1_jaw_1_link",
+        "geometry": {"type": "capsule", "radius": 0.0015, "length": 0.012},
+    }
+
+    assert _primitive_geometry(item) == item["geometry"]
+
+
 def test_candidate_collision_prim_warns_on_ambiguous_named_matches(capsys):
     prims = [
         _FakePrim("wrist_yaw_shaft_collision", "/World/shaft"),

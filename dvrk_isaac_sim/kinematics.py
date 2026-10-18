@@ -11,6 +11,11 @@ import numpy as np
 from .config import RobotConfig
 from .urdf_kinematics import UrdfKinematicChain
 from .rotations import quaternion_matrix_xyzw as _quaternion_matrix_xyzw
+from .transforms import (
+    rotation_matrix as _rotation,
+    rpy_matrix as _rpy_matrix,
+    transform_matrix as _transform,
+)
 
 
 @dataclass(frozen=True)
@@ -39,36 +44,6 @@ class IKResult:
     iterations: int
     position_error: float
     message: str = ""
-
-
-def _rpy_matrix(roll: float, pitch: float, yaw: float) -> np.ndarray:
-    cr, sr = math.cos(roll), math.sin(roll)
-    cp, sp = math.cos(pitch), math.sin(pitch)
-    cy, sy = math.cos(yaw), math.sin(yaw)
-    return np.array([
-        [cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
-        [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
-        [-sp, cp * sr, cp * cr],
-    ])
-
-
-
-def _rotation(axis: np.ndarray, angle: float) -> np.ndarray:
-    axis = axis / np.linalg.norm(axis)
-    x, y, z = axis
-    c, s = math.cos(angle), math.sin(angle)
-    return np.array([
-        [c + x * x * (1 - c), x * y * (1 - c) - z * s, x * z * (1 - c) + y * s],
-        [y * x * (1 - c) + z * s, c + y * y * (1 - c), y * z * (1 - c) - x * s],
-        [z * x * (1 - c) - y * s, z * y * (1 - c) + x * s, c + z * z * (1 - c)],
-    ])
-
-
-def _transform(rotation: np.ndarray, translation: Iterable[float]) -> np.ndarray:
-    result = np.eye(4)
-    result[:3, :3] = rotation
-    result[:3, 3] = translation
-    return result
 
 
 class CRTKComponent:

@@ -16,6 +16,15 @@ def test_geometry_points_samples_cylinder_surface():
     assert np.isclose(np.linalg.norm(points[:, :2], axis=1).max(), 0.004)
 
 
+def test_geometry_points_samples_capsule_surface():
+    points = _geometry_points({"type": "capsule", "radius": 0.004, "length": 0.12})
+
+    assert points is not None
+    np.testing.assert_allclose(points[:, 2].min(), -0.06)
+    np.testing.assert_allclose(points[:, 2].max(), 0.06)
+    assert np.isclose(np.linalg.norm(points[:, :2], axis=1).max(), 0.004)
+
+
 def test_contact_guard_loads_primitive_collision_items(tmp_path: Path):
     manifest = {
         "collision": {

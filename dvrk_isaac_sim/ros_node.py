@@ -37,6 +37,7 @@ class CRTKROSNode:
         now = self._node.get_clock().now()
         dt = (now - self._last_time).nanoseconds * 1e-9
         self._last_time = now
+        self.component.step_jaw(max(0.0, dt))
         self.component.model.step(max(0.0, dt))
         self.component.publish(now.to_msg())
 

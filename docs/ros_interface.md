@@ -193,7 +193,7 @@ Image transport is a separate sensor interface and does not need a CRTK state or
 
 ### PSM jaw interface
 
-PSMs expose a logical one-joint `jaw` interface in radians. Both `jaw/move_jp` and `jaw/servo_jp` accept a `sensor_msgs/msg/JointState` with one position value. The value drives the two generated instrument jaw links using their URDF mimic ratios (+0.5 and -0.5). State is reported on `jaw/measured_js` and `jaw/setpoint_js`.
+PSMs expose a logical one-joint `jaw` interface in radians. Both `jaw/move_jp` and `jaw/servo_jp` accept a `sensor_msgs/msg/JointState` with one position value. The value is treated as the jaw setpoint. The measured jaw opening is produced by a bounded logical PID controller configured under `robot.jaw.pid`, then drives the two generated instrument jaw links using their URDF mimic ratios (+0.5 and -0.5). `jaw/measured_js` reports controller position, velocity, and commanded effort; `jaw/setpoint_js` reports the requested target.
 
 The default 420006 limits are -0.349066 to 1.39626 radians; commands outside the configured limits are rejected.
 

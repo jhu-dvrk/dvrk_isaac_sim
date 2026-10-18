@@ -6,6 +6,7 @@ headless: false
 duration: 0.0
 simulation_rate_hz: 120.0
 render_rate_hz: 30.0
+collision_backend: newton
 ros_distro: jazzy
 rmw_implementation: rmw_fastrtps_cpp
 scene: null

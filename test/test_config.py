@@ -71,6 +71,7 @@ def test_simulator_config_is_typed_and_scene_free_by_default():
     assert config.render_rate_hz == 30.0
     assert config.headless is False
     assert config.scene is None
+    assert config.collision_backend == "newton"
     assert config.generated_dir.is_absolute()
 
 
@@ -79,6 +80,20 @@ def test_minimal_renderer_is_supported(tmp_path):
     config_path.write_text("renderer: MinimalRendering\n", encoding="utf-8")
 
     assert load_simulator_config(config_path).renderer == "MinimalRendering"
+
+
+def test_collision_backend_config_is_validated(tmp_path):
+    config_path = tmp_path / "isaac_sim.yaml"
+    config_path.write_text("collision_backend: none\n", encoding="utf-8")
+    assert load_simulator_config(config_path).collision_backend == "none"
+
+    config_path.write_text("collision_backend: unsupported\n", encoding="utf-8")
+    try:
+        load_simulator_config(config_path)
+    except ValueError as error:
+        assert "collision_backend" in str(error)
+    else:
+        raise AssertionError("unsupported collision backend was accepted")
 
 
 def test_environment_resolution_and_prop_only_environment_loads():

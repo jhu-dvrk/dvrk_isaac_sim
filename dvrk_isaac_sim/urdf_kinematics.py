@@ -3,43 +3,17 @@
 from __future__ import annotations
 
 import json
-import math
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
 import numpy as np
 
-
-def _numbers(value: str | None, count: int) -> list[float]:
-    values = [float(item) for item in (value or "").split()]
-    if len(values) != count:
-        return [0.0] * count
-    return values
-
-
-def _rpy_matrix(roll: float, pitch: float, yaw: float) -> np.ndarray:
-    cr, sr = math.cos(roll), math.sin(roll)
-    cp, sp = math.cos(pitch), math.sin(pitch)
-    cy, sy = math.cos(yaw), math.sin(yaw)
-    return np.array([[cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
-                     [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
-                     [-sp, cp * sr, cp * cr]])
-
-
-def _transform(rotation: np.ndarray, translation: list[float]) -> np.ndarray:
-    result = np.eye(4)
-    result[:3, :3] = rotation
-    result[:3, 3] = translation
-    return result
-
-
-def _rotation(axis: np.ndarray, angle: float) -> np.ndarray:
-    axis = axis / np.linalg.norm(axis)
-    x, y, z = axis
-    c, s = math.cos(angle), math.sin(angle)
-    return np.array([[c + x*x*(1-c), x*y*(1-c)-z*s, x*z*(1-c)+y*s],
-                     [y*x*(1-c)+z*s, c + y*y*(1-c), y*z*(1-c)-x*s],
-                     [z*x*(1-c)-y*s, z*y*(1-c)+x*s, c + z*z*(1-c)]])
+from .transforms import (
+    rotation_matrix as _rotation,
+    rpy_matrix as _rpy_matrix,
+    transform_matrix as _transform,
+)
+from .urdf_utils import numbers as _numbers
 
 
 def _joint_dict(element: ET.Element) -> dict:

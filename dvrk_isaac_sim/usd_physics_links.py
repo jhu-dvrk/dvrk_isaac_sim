@@ -8,7 +8,8 @@ from pathlib import Path
 
 import numpy as np
 
-from .urdf_kinematics import _rpy_matrix, _transform
+from .rotations import rotation_to_quaternion_xyzw
+from .transforms import transform_from_rpy as _transform_from_rpy
 
 
 def _usd_matrix_to_numpy_column_major(matrix) -> np.ndarray:
@@ -74,7 +75,7 @@ def _primitive_geometry(item: dict) -> dict | None:
     geometry = item.get("geometry")
     if not isinstance(geometry, dict):
         return None
-    if geometry.get("type") in {"box", "cylinder", "sphere"}:
+    if geometry.get("type") in {"box", "capsule", "cylinder", "sphere"}:
         return geometry
     return None
 
@@ -115,39 +116,6 @@ def _candidate_collision_prim(prim, Usd, UsdGeom, item: dict, blocked_paths: tup
         generic.sort(key=lambda entry: (entry[0], entry[1]))
         return generic[0][2]
     return None
-
-
-def _transform_from_origin(origin_xyz, origin_rpy) -> np.ndarray:
-    return _transform(_rpy_matrix(*[float(value) for value in origin_rpy]), [float(value) for value in origin_xyz])
-
-
-def _matrix_to_quat_xyzw(rotation: np.ndarray) -> tuple[float, float, float, float]:
-    trace = float(rotation[0, 0] + rotation[1, 1] + rotation[2, 2])
-    if trace > 0.0:
-        scale = 2.0 * np.sqrt(trace + 1.0)
-        w = 0.25 * scale
-        x = (rotation[2, 1] - rotation[1, 2]) / scale
-        y = (rotation[0, 2] - rotation[2, 0]) / scale
-        z = (rotation[1, 0] - rotation[0, 1]) / scale
-    elif rotation[0, 0] > rotation[1, 1] and rotation[0, 0] > rotation[2, 2]:
-        scale = 2.0 * np.sqrt(1.0 + rotation[0, 0] - rotation[1, 1] - rotation[2, 2])
-        w = (rotation[2, 1] - rotation[1, 2]) / scale
-        x = 0.25 * scale
-        y = (rotation[0, 1] + rotation[1, 0]) / scale
-        z = (rotation[0, 2] + rotation[2, 0]) / scale
-    elif rotation[1, 1] > rotation[2, 2]:
-        scale = 2.0 * np.sqrt(1.0 + rotation[1, 1] - rotation[0, 0] - rotation[2, 2])
-        w = (rotation[0, 2] - rotation[2, 0]) / scale
-        x = (rotation[0, 1] + rotation[1, 0]) / scale
-        y = 0.25 * scale
-        z = (rotation[1, 2] + rotation[2, 1]) / scale
-    else:
-        scale = 2.0 * np.sqrt(1.0 + rotation[2, 2] - rotation[0, 0] - rotation[1, 1])
-        w = (rotation[1, 0] - rotation[0, 1]) / scale
-        x = (rotation[0, 2] + rotation[2, 0]) / scale
-        y = (rotation[1, 2] + rotation[2, 1]) / scale
-        z = 0.25 * scale
-    return float(x), float(y), float(z), float(w)
 
 
 class MissingCollisionCandidate(RuntimeError):
@@ -229,6 +197,7 @@ class PhysicsLinkSync:
 
         link_xform = UsdGeom.Xform.Define(self._stage, prim_path)
         link_prim = link_xform.GetPrim()
+        link_prim.SetCustomDataByKey("dvrk:source_link", str(item.get("source_link", "")))
 
         rigid = UsdPhysics.RigidBodyAPI.Apply(link_prim)
         rigid.CreateKinematicEnabledAttr().Set(True)
@@ -249,12 +218,16 @@ class PhysicsLinkSync:
         source_prim = self._stage.GetPrimAtPath(source_path)
 
         primitive = _primitive_geometry(item)
-        if primitive is not None:
-            offset = _transform_from_origin(
+        geometry = item.get("geometry", {})
+        if primitive is not None or geometry.get("type") == "convex_mesh":
+            offset = _transform_from_rpy(
                 item.get("origin_xyz", [0.0, 0.0, 0.0]),
                 item.get("origin_rpy", [0.0, 0.0, 0.0]),
             )
-            self._create_primitive_collision(f"{prim_path}/Collision", primitive, UsdGeom, UsdPhysics)
+            if primitive is not None:
+                self._create_primitive_collision(f"{prim_path}/Collision", primitive, UsdGeom, UsdPhysics)
+            else:
+                self._create_convex_collision(f"{prim_path}/Collision", geometry, UsdGeom, UsdPhysics)
             return translate_op, orient_op, offset
 
         candidate = None
@@ -274,7 +247,7 @@ class PhysicsLinkSync:
             )
         candidate = _require_collision_candidate(candidate, item, source_path)
 
-        offset = _transform_from_origin(
+        offset = _transform_from_rpy(
             item.get("origin_xyz", [0.0, 0.0, 0.0]),
             item.get("origin_rpy", [0.0, 0.0, 0.0]),
         )
@@ -290,7 +263,7 @@ class PhysicsLinkSync:
         collision_prim_path = f"{prim_path}/Collision"
         collision_prim = self._stage.DefinePrim(collision_prim_path, candidate.GetTypeName() or "Xform")
         collision_prim.GetReferences().AddInternalReference(str(candidate.GetPath()))
-        if not collision_prim.HasAPI(UsdPhysics.CollisionAPI):
+        if collision_prim.IsA(UsdGeom.Gprim) and not collision_prim.HasAPI(UsdPhysics.CollisionAPI):
             UsdPhysics.CollisionAPI.Apply(collision_prim)
         geometry_targets = [child for child in Usd.PrimRange(collision_prim) if child.IsA(UsdGeom.Gprim)]
         for geometry in geometry_targets:
@@ -300,9 +273,26 @@ class PhysicsLinkSync:
 
         return translate_op, orient_op, offset
 
+    def _create_convex_collision(self, prim_path, geometry, UsdGeom, UsdPhysics):
+        from .collision_decomposition import validate_hull
+
+        points, faces = validate_hull(geometry["points"], geometry["faces"], 128)
+        collision = UsdGeom.Mesh.Define(self._stage, prim_path)
+        collision.CreatePointsAttr().Set(points.tolist())
+        collision.CreateFaceVertexCountsAttr().Set([3] * len(faces))
+        collision.CreateFaceVertexIndicesAttr().Set(faces.reshape(-1).tolist())
+        collision.CreateSubdivisionSchemeAttr().Set("none")
+        UsdPhysics.CollisionAPI.Apply(collision.GetPrim())
+        UsdPhysics.MeshCollisionAPI.Apply(collision.GetPrim()).CreateApproximationAttr().Set("convexHull")
+        _apply_collision_debug_color(collision.GetPrim(), UsdGeom)
+
     def _create_primitive_collision(self, prim_path: str, geometry: dict, UsdGeom, UsdPhysics) -> None:
         geometry_type = geometry.get("type")
-        if geometry_type == "cylinder":
+        if geometry_type == "capsule":
+            collision = UsdGeom.Capsule.Define(self._stage, prim_path)
+            collision.CreateRadiusAttr().Set(float(geometry.get("radius", 0.0)))
+            collision.CreateHeightAttr().Set(float(geometry.get("length", 0.0)))
+        elif geometry_type == "cylinder":
             collision = UsdGeom.Cylinder.Define(self._stage, prim_path)
             collision.CreateRadiusAttr().Set(float(geometry.get("radius", 0.0)))
             collision.CreateHeightAttr().Set(float(geometry.get("length", 0.0)))
@@ -345,6 +335,6 @@ class PhysicsLinkSync:
 
         translation = world_4x4[:3, 3]
         rotation = world_4x4[:3, :3]
-        x, y, z, w = _matrix_to_quat_xyzw(rotation)
+        x, y, z, w = rotation_to_quaternion_xyzw(rotation)
         translate_op.Set(Gf.Vec3d(float(translation[0]), float(translation[1]), float(translation[2])))
         orient_op.Set(Gf.Quatd(float(w), Gf.Vec3d(float(x), float(y), float(z))))

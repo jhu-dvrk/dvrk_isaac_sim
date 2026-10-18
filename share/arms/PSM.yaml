@@ -21,5 +21,18 @@ robot:
     - {name: wrist_yaw, type: revolute, lower: -1.39626, upper: 1.39626, velocity: 50.0}
   home_position: [0.0, 0.0, 0.12, 0.0, 0.0, 0.0]
   asset: {instrument: "420006", use_instrument_visual: true}
+  jaw:
+    lower: -0.349066
+    upper: 1.39626
+    pid:
+      kp: 90.0
+      ki: 0.0
+      kd: 6.0
+      max_effort: 18.0
+      inertia: 1.0
+      max_velocity: 1.2
+      target_rate: 1.5
+      integral_limit: 0.25
+      effort_deadband: 0.0
   control: {mode: kinematic, update_rate_hz: 120.0, state_publish_rate_hz: 100.0, command_timeout_s: 0.25, invalid_command_policy: reject}
   cartesian: {reference_frame: world, measured_frame: PSM_tool}

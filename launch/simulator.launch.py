@@ -15,6 +15,8 @@ from dvrk_isaac_sim.scene import (
     resolve_environment_path,
     resolve_scene_path,
 )
+from dvrk_isaac_sim.collision_primitives import has_instrument_collisions
+from dvrk_isaac_sim.collision_decomposition import collision_cache_valid
 
 
 
@@ -52,9 +54,14 @@ def _start_sim(context):
     else:
         scene = load_scene(environment_config)
     generated_dir = simulator_config.generated_dir
+    collision_backend = (
+        LaunchConfiguration("collision_backend").perform(context)
+        or simulator_config.collision_backend
+    )
 
     conversion_commands = []
     converter = package_share / "scripts" / "convert_dvrk_model.py"
+    collision_profile = package_share / "share/collision_primitives/instrument_hybrid.yaml"
 
     def ensure_asset(robot):
         variant = (robot.instrument or "420006" if robot.type == "PSM"
@@ -70,15 +77,21 @@ def _start_sim(context):
             if isinstance(manifest, dict) and manifest.get("format", 0) >= 5 and isinstance(manifest.get("visual"), dict):
                 if robot.type != "PSM":
                     return
-                collision = manifest.get("collision")
-                if isinstance(collision, dict) and len(collision.get("items", [])) >= 30:
-                    return
+                if collision_backend == "newton":
+                    if has_instrument_collisions(manifest) and collision_cache_valid(manifest, collision_profile):
+                        return
+                else:
+                    collision = manifest.get("collision")
+                    if isinstance(collision, dict) and len(collision.get("items", [])) >= 30:
+                        return
             # Older manifests lack the USD transform-order metadata required
             # to preserve joints whose visual offsets were folded by Isaac.
         command = [str(isaac_python), str(converter), "--model", robot.name,
                    "--output-dir", str(generated_dir), "--asset-name", asset_name, "--force"]
         command.extend(["--instrument", variant] if robot.type == "PSM"
                        else ["--endoscope", variant])
+        if collision_backend == "newton" and robot.type == "PSM":
+            command.extend(["--collision-profile", str(collision_profile), "--require-instrument-collisions"])
         conversion_commands.append(command)
 
     for robot in scene.robots:
@@ -86,6 +99,12 @@ def _start_sim(context):
 
     command = [str(isaac_python), str(package_share / "scripts" / "simulator.py"),
                "--config", str(config_path)]
+    if collision_backend:
+        command.extend(["--collision-backend", collision_backend])
+    command.extend(["--newton-device", LaunchConfiguration("newton_device").perform(context)])
+    newton_python = LaunchConfiguration("newton_python").perform(context)
+    if newton_python:
+        command.extend(["--newton-python", newton_python])
     if scene_config is not None:
         command.extend(["--scene", str(scene_config)])
     if environment_config is not None:
@@ -140,6 +159,12 @@ def generate_launch_description():
                               description="Scene YAML path or filename under share/scenes"),
         DeclareLaunchArgument("renderer", default_value="",
                               description="Optional renderer override"),
+        DeclareLaunchArgument("collision_backend", default_value="",
+                      description="Collision backend: none, kinematic_guard, or newton (Newton uses profiled PSM hybrid colliders)"),
+        DeclareLaunchArgument("newton_device", default_value="auto",
+                  description="Newton device: auto, cpu or cuda:0"),
+        DeclareLaunchArgument("newton_python", default_value="",
+                  description="Override automatically located isolated Newton Python"),
         DeclareLaunchArgument("env", default_value="",
                       description="Environment YAML path or filename under share/environments"),
         DeclareLaunchArgument("headless", default_value="",

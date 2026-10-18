@@ -15,7 +15,41 @@ The project focuses on software integration and kinematic simulation rather than
 - YAML-defined robot base frames, with future TF support planned.
 - ROS image transport for the ECM view.
 
-Full patient-cart CAD, dynamics, contact simulation, and hardware-runtime dependencies are outside the project scope.
+Full patient-cart dynamics and hardware-runtime dependencies are outside the project scope.
+Newton is the default contact backend for kinematic instrument colliders and
+dynamic environment props, with Isaac providing rendering. See the
+[Newton collision workflow](docs/newton_collision_test.md) for the existing
+full-cart bash command, collision overlays, and current dynamics limitations.
+Use `scripts/run_dvrk_full.sh --env NAME` to select an environment, for example
+`test_cube`, `ball_tray`, or `match_row`.
+
+## Collision Asset Generation
+
+Newton ROS launches use an offline hybrid collision profile: one shaft cylinder
+and per-link convex decomposition for wrists and jaws. Decomposition uses
+**V-HACD through [vhacdx 0.0.10](https://github.com/trimesh/vhacdx)**, not the
+Unity package. V-HACD's upstream project is
+[kmammou/v-hacd](https://github.com/kmammou/v-hacd). The binding is MIT-licensed
+and its bundled V-HACD code has BSD-style terms; both notices are distributed
+in vhacdx's installed `LICENSE` file. No Unity installation is required.
+[Trimesh](https://github.com/mikedh/trimesh) loads the source triangle meshes.
+
+Install the pinned build dependencies into the isolated Newton environment,
+not Isaac's bundled Python (from this package directory):
+
+```bash
+.venv-1/bin/python -m pip install -r requirements-collision.txt
+```
+
+Set `DVRK_COLLISION_PYTHON` to another compatible interpreter if needed;
+otherwise generation uses the isolated Newton interpreter. Existing caches
+regenerate on the next Newton ROS launch when the profile, source meshes, or
+recorded Xacro inputs change. Hull generation is not part of the simulation loop.
+Generated assets include separate OBJ hulls, embedded USD-mesh recipes, and
+backend/settings/input hashes. Failed builds preserve the previous asset.
+
+See [collision generation](docs/collision_primitives.md) for settings, explicit
+conversion commands, and validation limits.
 
 ## Documentation
 
@@ -24,6 +58,7 @@ Full patient-cart CAD, dynamics, contact simulation, and hardware-runtime depend
 - [Frames and conventions](docs/frames.md)
 - [ROS 2 interface](docs/ros_interface.md)
 - [Implementation roadmap](docs/implementation_plan.md)
+- [Experimental Newton collision test](docs/newton_collision_test.md)
 - [Shared PSM defaults](share/arms/PSM.yaml)
 - [PSM1 configuration](share/arms/PSM1.yaml)
 - [ECM configuration](share/arms/ECM.yaml)

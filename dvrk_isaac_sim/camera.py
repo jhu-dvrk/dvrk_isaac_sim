@@ -14,11 +14,6 @@ from .kinematics import Pose
 from .rotations import rotation_to_quaternion_wxyz
 
 
-def _quaternion_wxyz(rotation: np.ndarray) -> tuple[float, float, float, float]:
-    """Convert a rotation matrix to Isaac's scalar-first quaternion."""
-    return rotation_to_quaternion_wxyz(rotation)
-
-
 class IsaacCameraPublisher:
     """Create an Isaac camera and publish its rendered frames as ROS images.
 
@@ -309,7 +304,7 @@ class IsaacCameraPublisher:
 
     def set_pose(self, pose: Pose) -> None:
         """Apply the ECM pose before Isaac renders the next frame."""
-        orientation = _quaternion_wxyz(pose.orientation)
+        orientation = rotation_to_quaternion_wxyz(pose.orientation)
         for index, camera in enumerate(self._cameras):
             position = pose.position.copy()
             if self.mode == "stereo":

@@ -16,12 +16,10 @@ loaded from config; use --config to select a saved YAML file.
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
 from pathlib import Path
 import sys
 import threading
 import time
-from typing import Any
 
 import numpy as np
 
@@ -62,6 +60,16 @@ def _arguments() -> argparse.Namespace:
     )
     parser.add_argument("--env", type=Path, default=None,
                         help="optionally overlay an environment YAML onto the selected scene")
+    parser.add_argument(
+        "--collision-backend",
+        choices=("none", "kinematic_guard", "newton"),
+        default=None,
+        help="override configured collision backend",
+    )
+    parser.add_argument("--newton-device", default="auto",
+                        help="Newton Warp device, auto, cpu or cuda:0")
+    parser.add_argument("--newton-python", type=Path, default=None,
+                        help="override automatically located isolated Newton Python")
     parser.add_argument("--run-crtk-integration-test", action="store_true",
                         help="run the test-only CRTK integration test")
     parser.add_argument(
@@ -100,6 +108,12 @@ def _arguments() -> argparse.Namespace:
     args.duration = simulator_config.duration if args.duration is None else args.duration
     args.simulation_rate_hz = simulator_config.simulation_rate_hz
     args.render_rate_hz = simulator_config.render_rate_hz
+    args.collision_backend = (
+        simulator_config.collision_backend
+        if args.collision_backend is None else args.collision_backend
+    )
+    if args.collision_backend == "kinematic_guard":
+        args.kinematic_contact_guard = True
     args.scene_camera = args.scene_model.camera.as_dict()
     args.camera = args.scene_model.camera.mode
     if args.renderer not in {
@@ -107,6 +121,12 @@ def _arguments() -> argparse.Namespace:
     }:
         raise ValueError(f"{config_path}: unsupported renderer {args.renderer}")
     args.table_contact_clearance_m = 0.001
+    if args.collision_backend == "newton":
+        from dvrk_isaac_sim.newton_runtime import resolve_newton_python
+
+        args.newton_python = resolve_newton_python(args.newton_python)
+    else:
+        args.newton_python = None
     return args
 
 
@@ -177,159 +197,6 @@ def _ros_time(seconds: float):
     return result
 
 
-@dataclass(frozen=True)
-class _RenderState:
-    joint_names: tuple[str, ...]
-    joint_position: np.ndarray
-    jaw_position: float | None
-    camera_pose: Any | None
-
-
-@dataclass(frozen=True)
-class _ControlSnapshot:
-    simulation_time: float
-    captured_at: float
-    states: dict[str, _RenderState]
-    command_metrics: dict[str, tuple[int, int, int, int, float | None]]
-
-
-class _ControlLoop:
-    """Run ROS callbacks and kinematics independently of blocking rendering."""
-
-    def __init__(self, executor, ordered_nodes, clock_publisher, clock_type,
-                 rate_hz: float, initial_time: float,
-                 component_lock: threading.RLock | None = None) -> None:
-        self._executor = executor
-        self._ordered_nodes = ordered_nodes
-        self._clock_publisher = clock_publisher
-        self._clock_type = clock_type
-        self._period = 1.0 / rate_hz
-        self._stop = threading.Event()
-        self._state_lock = threading.Lock()
-        self.component_lock = component_lock or threading.RLock()
-        self._playing = True
-        self._simulation_time = initial_time
-        self._updates = 0
-        self._steps = 0
-        self._ros_spins = 0
-        self._exception: BaseException | None = None
-        self._snapshot = self._capture_snapshot()
-        self._ros_thread = threading.Thread(
-            target=self._spin_ros, name="dvrk-isaac-ros", daemon=True
-        )
-        self._thread = threading.Thread(
-            target=self._run, name="dvrk-isaac-control", daemon=True
-        )
-
-    def _capture_snapshot(self) -> _ControlSnapshot:
-        states = {}
-        command_metrics = {}
-        for _, component, visual, camera in self._ordered_nodes:
-            measured = component.model.measured_js()
-            states[component.config.name] = _RenderState(
-                measured.names,
-                measured.position,
-                component.jaw_position,
-                component.model.measured_cp() if camera is not None else None,
-            )
-            command_metrics[component.config.name] = component.command_metrics()
-        return _ControlSnapshot(
-            self._simulation_time, time.monotonic(), states, command_metrics
-        )
-
-    def start(self) -> None:
-        self._ros_thread.start()
-        self._thread.start()
-
-    def stop(self) -> None:
-        self._stop.set()
-        if self._ros_thread.is_alive():
-            self._ros_thread.join(timeout=5.0)
-        if self._thread.is_alive():
-            self._thread.join(timeout=5.0)
-
-    def set_playing(self, playing: bool) -> None:
-        with self._state_lock:
-            self._playing = bool(playing)
-
-    def snapshot(self) -> _ControlSnapshot:
-        with self._state_lock:
-            return self._snapshot
-
-    def metrics(self) -> tuple[int, int, int, float]:
-        with self._state_lock:
-            return self._updates, self._steps, self._ros_spins, self._simulation_time
-
-    def raise_if_failed(self) -> None:
-        with self._state_lock:
-            error = self._exception
-        if error is not None:
-            raise RuntimeError("CRTK control loop failed") from error
-
-    def _spin_ros(self) -> None:
-        """Service ROS independently of both control and render cadence."""
-        try:
-            while not self._stop.is_set():
-                self._executor.spin_once(timeout_sec=0.01)
-                with self._state_lock:
-                    self._ros_spins += 1
-        except BaseException as error:
-            with self._state_lock:
-                self._exception = error
-            self._stop.set()
-
-    def _run(self) -> None:
-        next_step = time.monotonic()
-        try:
-            while not self._stop.is_set():
-                now = time.monotonic()
-                wait = next_step - now
-                if wait > 0.0:
-                    self._stop.wait(wait)
-                    continue
-
-                # If Python or the OS delayed this thread, advance enough fixed
-                # steps to keep simulation time aligned with wall time. A single
-                # larger model step is equivalent for the velocity-limited
-                # kinematic interpolation and avoids a catch-up CPU spiral.
-                step_count = 1 + int(max(0.0, now - next_step) / self._period)
-                next_step += step_count * self._period
-
-                with self._state_lock:
-                    playing = self._playing
-                    if playing:
-                        self._simulation_time += step_count * self._period
-                    current_time = self._simulation_time
-
-                stamp = _ros_time(current_time)
-                with self.component_lock:
-                    for _, component, _, _ in self._ordered_nodes:
-                        component.set_simulation_stamp(stamp)
-
-                    if playing:
-                        clock = self._clock_type()
-                        clock.clock = stamp
-                        self._clock_publisher.publish(clock)
-
-                    dt = step_count * self._period if playing else 0.0
-                    for _, component, _, _ in self._ordered_nodes:
-                        component.process_pending_commands()
-                        component.model.step(dt)
-                        component.publish(stamp, valid=playing)
-
-                    snapshot = self._capture_snapshot()
-
-                with self._state_lock:
-                    self._snapshot = snapshot
-                    self._updates += 1
-                    if playing:
-                        self._steps += step_count
-        except BaseException as error:
-            with self._state_lock:
-                self._exception = error
-            self._stop.set()
-
-
 def _generated_variant(args: argparse.Namespace, entry: SceneRobot) -> tuple[Path, Path]:
     variant = (entry.instrument or "420006" if entry.type == "PSM"
                else entry.endoscope or "Si_straight")
@@ -349,7 +216,7 @@ def _spawn_scene_props(props) -> None:
     if not props:
         return
     import omni.usd
-    from pxr import Gf, PhysxSchema, Sdf, UsdGeom, UsdPhysics
+    from pxr import Gf, Sdf, UsdGeom, UsdPhysics
 
     stage = omni.usd.get_context().get_stage()
     root = stage.DefinePrim("/World/Environment", "Xform")
@@ -383,8 +250,6 @@ def _spawn_scene_props(props) -> None:
             mass_api = UsdPhysics.MassAPI.Apply(prim)
             if prop.mass is not None:
                 mass_api.CreateMassAttr(float(prop.mass))
-            physx_rigid = PhysxSchema.PhysxRigidBodyAPI.Apply(prim)
-            physx_rigid.CreateEnableCCDAttr().Set(True)
         print(
             f"Spawned environment prop {prop.name}: kind={prop.kind}, "
             f"position={prop.position}, size={prop.size}",
@@ -393,22 +258,6 @@ def _spawn_scene_props(props) -> None:
 
     # Keep the Xform in the scene graph even for empty-only styling cases.
     UsdGeom.Xformable(root)
-
-
-def _ensure_physics_scene(simulation_rate_hz: float) -> None:
-    import omni.usd
-    from pxr import PhysxSchema, UsdPhysics
-
-    stage = omni.usd.get_context().get_stage()
-    if stage is None:
-        raise RuntimeError("Isaac Sim stage is not available")
-    scene_path = "/World/PhysicsScene"
-    if stage.GetPrimAtPath(scene_path).IsValid():
-        return
-    physics_scene = UsdPhysics.Scene.Define(stage, scene_path)
-    physx_scene = PhysxSchema.PhysxSceneAPI.Apply(physics_scene.GetPrim())
-    physx_scene.CreateEnableCCDAttr().Set(True)
-    physx_scene.CreateTimeStepsPerSecondAttr().Set(float(simulation_rate_hz))
 
 
 def _table_surface_z_world(props) -> float | None:
@@ -448,11 +297,12 @@ def main() -> int:
         # make the camera miss its wall-clock target.
         "disable_viewport_updates": args.headless,
     })
-    nodes = []
+    runtimes = []
     clock_node = None
     executor = None
     ui_window = None
     control_loop = None
+    collision_backend = None
     try:
         from isaacsim.core.utils.extensions import enable_extension
 
@@ -474,7 +324,6 @@ def main() -> int:
         # only; never add the endoscope/ECM mesh to the stage.
 
         _setup_scene_lighting()
-        _ensure_physics_scene(args.simulation_rate_hz)
         _spawn_scene_props(args.scene_model.props)
         table_surface_z = _table_surface_z_world(args.scene_model.props)
         if table_surface_z is not None:
@@ -499,9 +348,12 @@ def main() -> int:
             sys.path.insert(0, str(package_root))
 
         from dvrk_isaac_sim.config import load_robot_config
+        from dvrk_isaac_sim.jaw_control import jaw_controller_from_config
         from dvrk_isaac_sim.kinematics import CRTKECM, CRTKPSM
         from dvrk_isaac_sim.kinematic_contact_guard import KinematicContactGuard
         from dvrk_isaac_sim.ros_interface import CRTKROSComponent
+        from dvrk_isaac_sim.collision_backend import make_collision_backend
+        from dvrk_isaac_sim.runtime import ComponentRuntime, ControlLoop
         from dvrk_isaac_sim.usd_physics_links import PhysicsLinkSync
         from dvrk_isaac_sim.usd_visual import CRTKUSDVisual
 
@@ -530,9 +382,12 @@ def main() -> int:
                 raise ValueError(f"Unsupported robot type: {config.type}")
             node = Node(f"dvrk_isaac_sim_{config.name}", namespace=f"/{namespace}")
             executor.add_node(node)
+            jaw_controller = (
+                jaw_controller_from_config(config) if config.type == "PSM" else None
+            )
             component = CRTKROSComponent(
                 node, config, model, _ros_time(1.0 / args.simulation_rate_hz),
-                component_lock,
+                component_lock, jaw_controller,
             )
             if config.type == "PSM" and table_surface_z is not None:
                 component.set_world_z_floor(
@@ -581,7 +436,7 @@ def main() -> int:
                 from dvrk_isaac_sim.camera import IsaacCameraPublisher
                 camera = IsaacCameraPublisher(node, config, args.camera, args.scene_camera)
                 cameras.append(camera)
-            nodes.append((node, component, visual, camera))
+            runtimes.append(ComponentRuntime(node, component, visual, camera, jaw_controller))
 
         if scene_entries:
             for entry in scene_entries:
@@ -591,15 +446,16 @@ def main() -> int:
         # PSM Cartesian CRTK topics are expressed in the moving ECM optical
         # frame, as on a dVRK system. Wire this after all components exist
         # because scene YAML may list the PSMs before the ECM.
-        ecm_component = next((component for _, component, _, _ in nodes
-                              if component.config.type == "ECM"), None)
-        if ecm_component is not None:
+        ecm_runtime = next((runtime for runtime in runtimes if runtime.type == "ECM"), None)
+        if ecm_runtime is not None:
             # PSM Cartesian topics use dVRK view axes, derived from the
             # current ECM optical FK rather than raw optical-camera axes.
-            ecm_view_frame = f"{ecm_component.config.name}_view"
-            for _, component, _, _ in nodes:
-                if component.config.type == "PSM":
-                    component.set_cartesian_reference(ecm_component.model, ecm_view_frame)
+            ecm_view_frame = f"{ecm_runtime.name}_view"
+            for runtime in runtimes:
+                if runtime.type == "PSM":
+                    runtime.component.set_cartesian_reference(
+                        ecm_runtime.component.model, ecm_view_frame
+                    )
 
         # Let Fabric Scene Delegate mirror the referenced robot hierarchy and
         # the identity-valued CRTK xform operations once.  Subsequent joint
@@ -607,58 +463,61 @@ def main() -> int:
         # repeatedly invalidating the USD stage and Hydra scene.
         simulation_app.update()
         fabric_visual = None
-        for _, _, visual, _ in nodes:
-            if visual is not None:
-                visual.enable_fabric()
+        for runtime in runtimes:
+            if runtime.visual is not None:
+                runtime.visual.enable_fabric()
                 if fabric_visual is None:
-                    fabric_visual = visual
+                    fabric_visual = runtime.visual
         if fabric_visual is not None:
             print("Robot visual transforms: Isaac Fabric runtime updates enabled", flush=True)
 
         # Start from the importer-authored zero-joint pose.  The configured
         # home state is applied below through move_jp, once the USD/Fabric
         # hierarchy and Isaac timeline are ready.
-        for _, component, _, _ in nodes:
-            component.model.prepare_startup_move()
+        for runtime in runtimes:
+            runtime.prepare_startup_move()
         with Sdf.ChangeBlock():
-            for _, component, visual, _ in nodes:
-                measured = component.model.measured_js()
-                if visual is not None:
-                    visual.update(
-                        measured.names, measured.position,
-                        component.jaw_position,
-                    )
-                if component.config.name in physics_links:
-                    physics_links[component.config.name].update(
-                        measured.names,
-                        measured.position,
-                        component.jaw_position,
-                    )
+            for runtime in runtimes:
+                runtime.apply_current_state(physics_links)
         if fabric_visual is not None:
             fabric_visual.flush()
+
+        import omni.usd
+
+        stage = omni.usd.get_context().get_stage()
+        collision_backend = make_collision_backend(
+            args.collision_backend,
+            stage=stage,
+            physics_links=physics_links,
+            has_environment=bool(args.scene_model.props),
+            newton_python=args.newton_python,
+            newton_device=args.newton_device,
+            initial_time=max(0.0, float(get_timeline_interface().get_current_time())),
+        )
 
         if args.report_collision_frames:
             import omni.usd
             from dvrk_isaac_sim.collision_diagnostics import report_collision_frames
 
             stage = omni.usd.get_context().get_stage()
-            for _, component, _, _ in nodes:
-                if component.config.name not in physics_links:
+            for runtime in runtimes:
+                if runtime.name not in physics_links:
                     continue
-                manifest = component.config.kinematics_manifest
+                manifest = runtime.component.config.kinematics_manifest
                 if manifest is not None:
-                    report_collision_frames(stage, component.config.name, manifest)
+                    report_collision_frames(stage, runtime.name, manifest)
 
         if not args.headless:
             from dvrk_isaac_sim.isaac_ui import IsaacCRTKWindow
             ui_window = IsaacCRTKWindow(
-                [component for _, component, _, _ in nodes], component_lock
+                [runtime.component for runtime in runtimes], component_lock,
+                collision_display=collision_backend.display,
             )
 
         # Advance ECM first so every PSM reads the current, not previous-step,
         # camera pose when converting Cartesian state and commands.
-        ordered_nodes = sorted(
-            nodes, key=lambda item: 0 if item[1].config.type == "ECM" else 1
+        ordered_runtimes = sorted(
+            runtimes, key=lambda runtime: 0 if runtime.type == "ECM" else 1
         )
 
         timeline = get_timeline_interface()
@@ -671,20 +530,19 @@ def main() -> int:
         # this makes startup initialization observable to CRTK clients rather
         # than silently changing only the internal model state.
         with component_lock:
-            for _, component, _, _ in nodes:
-                if not component.command_joint_position(component.config.home_position):
+            for runtime in runtimes:
+                if not runtime.command_home_position():
                     raise RuntimeError(
-                        f"{component.config.name}: failed to apply startup move_jp"
+                        f"{runtime.name}: failed to apply startup move_jp"
                     )
                 print(
-                    f"{component.config.name}: startup move_jp -> "
-                    f"{component.config.home_position.tolist()}",
+                    f"{runtime.name}: startup move_jp -> "
+                    f"{runtime.component.config.home_position.tolist()}",
                     flush=True,
                 )
-        for _, component, _, _ in nodes:
-            component.publish_tool_type()
+        for runtime in runtimes:
+            runtime.publish_tool_type()
         simulation_time = max(0.0, float(timeline.get_current_time()))
-        fixed_dt = 1.0 / args.simulation_rate_hz
         clock_publisher = clock_node.create_publisher(Clock, "/clock", 10)
         if args.run_crtk_integration_test:
             print("Isaac Sim CRTK integration test running", flush=True)
@@ -692,9 +550,9 @@ def main() -> int:
                 print(f"  {entry.name} topics: /{entry.name}/measured_js, /{entry.name}/measured_cp, /{entry.name}/servo_jp", flush=True)
 
         initial_time = max(0.0, float(timeline.get_current_time()))
-        control_loop = _ControlLoop(
-            executor, ordered_nodes, clock_publisher, Clock,
-            args.simulation_rate_hz, initial_time, component_lock,
+        control_loop = ControlLoop(
+            executor, ordered_runtimes, clock_publisher, Clock,
+            args.simulation_rate_hz, initial_time, _ros_time, component_lock,
         )
         control_loop.start()
 
@@ -733,29 +591,21 @@ def main() -> int:
             # three-PSM scene dramatically slower than a stationary scene.
             scene_update_start = time.monotonic()
             with Sdf.ChangeBlock():
-                for _, component, visual, _ in ordered_nodes:
-                    state = snapshots.get(component.config.name)
-                    if state is not None and visual is not None:
-                        visual.update(
-                            state.joint_names, state.joint_position,
-                            state.jaw_position,
-                        )
-                    if state is not None and component.config.name in physics_links:
-                        physics_links[component.config.name].update(
-                            state.joint_names, state.joint_position,
-                            state.jaw_position,
-                        )
+                for runtime in ordered_runtimes:
+                    runtime.apply_state(snapshots.get(runtime.name), physics_links)
             if fabric_visual is not None:
                 fabric_visual.flush()
 
+            if collision_backend is not None:
+                collision_backend.advance(
+                    current_time, playing=playing, render_period=render_period
+                )
+                collision_backend.render()
+
             # Camera helpers may query the stage while setting their poses, so
             # keep them outside the Sdf change block.
-            for _, component, _, camera in ordered_nodes:
-                state = snapshots.get(component.config.name)
-                if state is None:
-                    continue
-                if camera is not None and playing and state.camera_pose is not None:
-                    camera.set_pose(state.camera_pose)
+            for runtime in ordered_runtimes:
+                runtime.update_camera_pose(snapshots.get(runtime.name), playing)
             scene_update_elapsed = time.monotonic() - scene_update_start
             scene_update_time_total += scene_update_elapsed
             scene_update_time_max = max(
@@ -773,9 +623,9 @@ def main() -> int:
 
             # ROS image publication is subscriber-gated. The RTSP writer is
             # attached once and captures this wall-clock-paced render product.
-            for _, _, _, camera in ordered_nodes:
-                if camera is not None and playing:
-                    camera.publish(current_time)
+            for runtime in ordered_runtimes:
+                if runtime.camera is not None and playing:
+                    runtime.camera.publish(current_time)
                     active_camera_frames += 1
             if ui_window is not None:
                 ui_window.update()
@@ -843,7 +693,12 @@ def main() -> int:
                     f"{1000.0 * render_time_max:.1f} ms max; "
                     f"control-state-age={average_control_age_before_ms:.1f} ms submit/"
                     f"{average_control_age_after_ms:.1f} ms rendered"
-                    + (f"; commands[{command_text}]" if command_text else ""),
+                    + (f"; commands[{command_text}]" if command_text else "")
+                    + (
+                        f"; contacts={collision_backend.contact_count}"
+                        if collision_backend is not None and collision_backend.contact_count
+                        else ""
+                    ),
                     flush=True,
                 )
                 last_status = render_end
@@ -874,6 +729,8 @@ def main() -> int:
     finally:
         if control_loop is not None:
             control_loop.stop()
+        if collision_backend is not None:
+            collision_backend.close()
         if ui_window is not None:
             ui_window.close()
         if executor is not None:
@@ -881,8 +738,8 @@ def main() -> int:
         if "rclpy" in locals() and rclpy.ok():
             if clock_node is not None:
                 clock_node.destroy_node()
-            for node, _, _, _ in nodes:
-                node.destroy_node()
+            for runtime in runtimes:
+                runtime.node.destroy_node()
             rclpy.shutdown()
         simulation_app.close()
     return 0

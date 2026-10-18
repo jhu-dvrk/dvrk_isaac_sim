@@ -10,7 +10,7 @@ from typing import Iterable
 import numpy as np
 
 from .scene import SceneProp
-from .urdf_kinematics import _rpy_matrix, _transform
+from .transforms import transform_from_rpy as _transform_from_rpy
 
 
 @dataclass(frozen=True)
@@ -75,6 +75,21 @@ def _cylinder_points(radius: float, length: float, segments: int = 24) -> np.nda
     return np.asarray(rings + [[0.0, 0.0, -half], [0.0, 0.0, half]], dtype=float)
 
 
+def _capsule_points(radius: float, length: float, segments: int = 24) -> np.ndarray:
+    radius = float(radius)
+    half = 0.5 * max(float(length) - 2.0 * radius, 0.0)
+    angles = np.linspace(0.0, 2.0 * np.pi, int(segments), endpoint=False)
+    rings = [
+        [radius * np.cos(angle), radius * np.sin(angle), z]
+        for z in (-half, half)
+        for angle in angles
+    ]
+    caps = [[0.0, 0.0, -half - radius], [0.0, 0.0, half + radius]]
+    caps.extend([radius * np.cos(angle), radius * np.sin(angle), -half] for angle in angles)
+    caps.extend([radius * np.cos(angle), radius * np.sin(angle), half] for angle in angles)
+    return np.asarray(rings + caps, dtype=float)
+
+
 def _sphere_points(radius: float, segments: int = 16) -> np.ndarray:
     radius = float(radius)
     points = [
@@ -112,6 +127,12 @@ def _geometry_points(geometry: dict) -> np.ndarray | None:
         if radius <= 0.0 or length <= 0.0:
             return None
         return _cylinder_points(radius, length)
+    if geometry_type == "capsule":
+        radius = float(geometry.get("radius", 0.0))
+        length = float(geometry.get("length", 0.0))
+        if radius <= 0.0 or length <= 0.0:
+            return None
+        return _capsule_points(radius, length)
     if geometry_type == "sphere":
         radius = float(geometry.get("radius", 0.0))
         if radius <= 0.0:
@@ -208,9 +229,9 @@ class KinematicContactGuard:
             points = _geometry_points(geometry)
             if points is None:
                 continue
-            origin = _transform(
-                _rpy_matrix(*[float(value) for value in item.get("origin_rpy", [0.0, 0.0, 0.0])]),
-                [float(value) for value in item.get("origin_xyz", [0.0, 0.0, 0.0])],
+            origin = _transform_from_rpy(
+                item.get("origin_xyz", [0.0, 0.0, 0.0]),
+                item.get("origin_rpy", [0.0, 0.0, 0.0]),
             )
             homogeneous = np.c_[points, np.ones(len(points))]
             local_points = (origin @ homogeneous.T).T[:, :3]
