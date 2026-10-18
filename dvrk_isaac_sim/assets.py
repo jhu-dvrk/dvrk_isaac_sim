@@ -43,13 +43,14 @@ def _model_root() -> Path:
     raise RuntimeError(f"Could not locate dvrk_model/urdf below ROS prefix: {prefix_path}")
 
 
-def _expand_xacro(model, instrument, endoscope, xacro, parent_link, xacro_arg, xacro_path, output) -> None:
+def _expand_xacro(model, instrument, endoscope, xacro, parent_link, xacro_arg, xacro_path, output, show_rcm=False) -> None:
     command = [xacro, str(xacro_path)]
     if model.startswith("PSM"):
         command.append(f"instrument:={instrument}")
     else:
         command.append(f"endoscope:={endoscope}")
     command.append(f"parent_link_:={parent_link}")
+    command.append(f"show_rcm:={'true' if show_rcm else 'false'}")
     command.extend(xacro_arg)
     try:
         with output.open("w", encoding="utf-8") as stream:
@@ -94,7 +95,8 @@ def _strip_physics(usd_path: str) -> None:
 def convert_model(*, model, output_dir, instrument="420006", endoscope="Si_straight",
                   asset_name=None, xacro="xacro", xacro_file=None, parent_link="world",
                   xacro_arg=(), merge_fixed_joints=True, fix_base=True,
-                  collision_from_visuals=False, force=False, keep_physics=False):
+                  collision_from_visuals=False, force=False, keep_physics=False,
+                  show_rcm=False):
     """Convert one robot using the current Isaac application."""
     asset_name = asset_name or (
         f"{model}_{instrument}" if model.startswith("PSM")
@@ -116,7 +118,7 @@ def convert_model(*, model, output_dir, instrument="420006", endoscope="Si_strai
     try:
         with tempfile.TemporaryDirectory(prefix="dvrk_isaac_sim_") as temporary:
             urdf_path = Path(temporary) / f"{model}.urdf"
-            _expand_xacro(model, instrument, endoscope, xacro, parent_link, xacro_arg, xacro_path, urdf_path)
+            _expand_xacro(model, instrument, endoscope, xacro, parent_link, xacro_arg, xacro_path, urdf_path, show_rcm=show_rcm)
             manifest_path = write_kinematics_manifest(urdf_path, asset_dir / "kinematics.json", model)
             print(f"Generated kinematics manifest {manifest_path}", flush=True)
             from isaacsim.asset.importer.urdf.impl import URDFImporter, URDFImporterConfig
@@ -162,6 +164,12 @@ def main() -> int:
         action=argparse.BooleanOptionalAction,
         default=False,
         help="retain importer-authored PhysX schemas instead of producing a visual-only asset",
+    )
+    parser.add_argument(
+        "--show-rcm",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="include Remote Center of Motion visual spheres",
     )
     args = parser.parse_args()
 

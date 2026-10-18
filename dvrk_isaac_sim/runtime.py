@@ -58,11 +58,24 @@ def _reference_usd(path: Path | None, prim_path: str, position=None, orientation
         from pxr import Gf, UsdGeom
 
         xform = UsdGeom.Xformable(prim)
+        ops = xform.GetOrderedXformOps()
         if position is not None:
-            xform.AddTranslateOp().Set(Gf.Vec3d(*[float(v) for v in position]))
+            translate_op = next((op for op in ops if op.GetOpType() == UsdGeom.XformOp.TypeTranslate), None)
+            if translate_op is None:
+                translate_op = xform.AddTranslateOp()
+            if translate_op.GetAttr().GetTypeName() == "float3":
+                translate_op.Set(Gf.Vec3f(*[float(v) for v in position]))
+            else:
+                translate_op.Set(Gf.Vec3d(*[float(v) for v in position]))
         if orientation_xyzw is not None:
             quat = Gf.Quatd(float(orientation_xyzw[3]), Gf.Vec3d(*[float(v) for v in orientation_xyzw[:3]]))
-            xform.AddOrientOp().Set(Gf.Quatf(quat))
+            orient_op = next((op for op in ops if op.GetOpType() == UsdGeom.XformOp.TypeOrient), None)
+            if orient_op is None:
+                orient_op = xform.AddOrientOp()
+            if orient_op.GetAttr().GetTypeName() == "quatf":
+                orient_op.Set(Gf.Quatf(quat))
+            else:
+                orient_op.Set(quat)
 
 
 def _setup_scene_lighting() -> None:

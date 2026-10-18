@@ -16,16 +16,11 @@ data_files = [
     ("share/ament_index/resource_index/packages", [f"resource/{package_name}"]),
     (f"share/{package_name}", ["package.xml"]),
     (f"share/{package_name}/share", ["share/isaac_sim.yaml.example"]),
-    (f"share/{package_name}/share/open-xr", [
-        str(path) for path in sorted(Path("share/open-xr").glob("*"))
-        if path.is_file()
-    ]),
     (f"share/{package_name}/share/dvrk_systems", [
         str(path) for path in sorted(Path("share/dvrk_systems").glob("*.json"))
     ]),
     (f"share/{package_name}/launch", [
         "launch/simulator.launch.py",
-        "launch/open_xr.launch.py",
         "launch/test_scene.launch.py",
     ]),
     (f"share/{package_name}/scripts", script_files),

@@ -58,3 +58,11 @@ def test_shared_patient_cart_and_exercise_resolve_from_base_package():
     scene = load_installed_scene_config(paths)
     assert {robot.name for robot in scene.robots} == {"ECM", "PSM1", "PSM2", "PSM3"}
     assert scene.objects
+
+
+def test_shared_patient_cart_and_needle_thread_resolve_from_base_package():
+    config = ROOT / "share" / "isaac_sim.yaml.example"
+    paths = resolve_scene_path(config, ["ECM_PSM1_PSM2_PSM3.yaml", "needle_thread.yaml"])
+    scene = load_installed_scene_config(paths)
+    assert {robot.name for robot in scene.robots} == {"ECM", "PSM1", "PSM2", "PSM3"}
+    assert [obj.name for obj in scene.objects] == ["phantom", "needle_thread"]
