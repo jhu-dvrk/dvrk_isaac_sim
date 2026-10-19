@@ -20,22 +20,21 @@ class CollisionDisplay:
         self.materials = {}
         self.visible = True
         self.visuals_visible = True
+        self.active_shapes = frozenset()
         self.visual_roots = {
             path.split("/PhysicsLinks/")[0] + "/Geometry"
             for path in shape_paths if "/PhysicsLinks/" in path
         }
         self.previous_active = None
-        for active, color in ((False, (1.0, 0.1, 0.1)), (True, (0.1, 1.0, 0.1))):
-            path = "/World/NewtonCollisionMaterials/" + ("Contact" if active else "Idle")
-            material = UsdShade.Material.Define(stage, path)
-            shader = UsdShade.Shader.Define(stage, path + "/Surface")
-            shader.CreateIdAttr("UsdPreviewSurface")
-            shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(color)
-            shader.CreateInput("emissiveColor", Sdf.ValueTypeNames.Color3f).Set(tuple(value * 0.25 for value in color))
-            shader.CreateInput("opacity", Sdf.ValueTypeNames.Float).Set(0.45)
-            shader.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(1.0)
-            material.CreateSurfaceOutput().ConnectToSource(shader.ConnectableAPI(), "surface")
-            self.materials[active] = material
+        material = UsdShade.Material.Define(stage, "/World/NewtonCollisionMaterials/Contact")
+        shader = UsdShade.Shader.Define(stage, "/World/NewtonCollisionMaterials/Contact/Surface")
+        shader.CreateIdAttr("UsdPreviewSurface")
+        shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set((0.1, 1.0, 0.1))
+        shader.CreateInput("emissiveColor", Sdf.ValueTypeNames.Color3f).Set((0.025, 0.25, 0.025))
+        shader.CreateInput("opacity", Sdf.ValueTypeNames.Float).Set(0.45)
+        shader.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(1.0)
+        material.CreateSurfaceOutput().ConnectToSource(shader.ConnectableAPI(), "surface")
+        self.materials[True] = material
         for path, shape in shape_paths.items():
             if "/PhysicsLinks/" not in path:
                 continue
@@ -56,28 +55,34 @@ class CollisionDisplay:
         from pxr import UsdGeom, UsdShade
 
         active_shapes = frozenset(active_shapes)
+        self.active_shapes = active_shapes
         if active_shapes == self.previous_active:
             return
         for path, shape in self.shapes.items():
-            active = shape in active_shapes
-            if self.previous_active is not None and active == (shape in self.previous_active):
-                continue
             prim = self.stage.GetPrimAtPath(path)
-            gprim = UsdGeom.Gprim(prim)
-            gprim.CreateDisplayColorAttr().Set([(0.1, 1.0, 0.1) if active else (1.0, 0.1, 0.1)])
-            gprim.CreateDisplayOpacityAttr().Set([0.45])
-            UsdShade.MaterialBindingAPI.Apply(prim).Bind(
-                self.materials[active], bindingStrength=UsdShade.Tokens.strongerThanDescendants
+            imageable = UsdGeom.Imageable(prim)
+            active = shape in active_shapes
+            imageable.CreateVisibilityAttr().Set(
+                UsdGeom.Tokens.inherited if self.visible and active else UsdGeom.Tokens.invisible
             )
+            if active:
+                gprim = UsdGeom.Gprim(prim)
+                gprim.CreateDisplayColorAttr().Set([(0.1, 1.0, 0.1)])
+                gprim.CreateDisplayOpacityAttr().Set([0.45])
+                UsdShade.MaterialBindingAPI.Apply(prim).Bind(
+                    self.materials[True], bindingStrength=UsdShade.Tokens.strongerThanDescendants
+                )
         self.previous_active = active_shapes
 
     def set_visible(self, visible):
         from pxr import UsdGeom
 
         self.visible = bool(visible)
-        for path in self.shapes:
+        for path, shape in self.shapes.items():
             UsdGeom.Imageable(self.stage.GetPrimAtPath(path)).CreateVisibilityAttr().Set(
-                UsdGeom.Tokens.inherited if self.visible else UsdGeom.Tokens.invisible
+                UsdGeom.Tokens.inherited
+                if self.visible and shape in self.active_shapes
+                else UsdGeom.Tokens.invisible
             )
 
     def set_visuals_visible(self, visible):

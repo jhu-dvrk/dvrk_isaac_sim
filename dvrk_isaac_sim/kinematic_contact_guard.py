@@ -10,6 +10,8 @@ from typing import Iterable
 import numpy as np
 
 from .scene import SceneProp
+from .environment_geometry import cone_bowl_segments
+from .rotations import quaternion_matrix_xyzw
 from .transforms import transform_from_rpy as _transform_from_rpy
 
 
@@ -24,6 +26,35 @@ class _AabbObstacle:
     name: str
     minimum: np.ndarray
     maximum: np.ndarray
+
+
+@dataclass(frozen=True)
+class _ConvexObstacle:
+    points: np.ndarray
+    axes: np.ndarray
+    minimum: np.ndarray
+    maximum: np.ndarray
+
+
+def _cone_obstacles(prop: SceneProp, margin: float):
+    rotation = quaternion_matrix_xyzw(np.asarray(prop.orientation_xyzw))
+    obstacles = []
+    for vertices, faces in cone_bowl_segments(prop.size):
+        points = np.asarray(vertices) @ rotation.T + prop.position
+        triangles = points[np.asarray(faces)]
+        normals = np.cross(triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0])
+        normals /= np.linalg.norm(normals, axis=1)[:, None]
+        axes = np.vstack((np.eye(3), normals))
+        projected = points @ axes.T
+        obstacles.append(_ConvexObstacle(points, axes, projected.min(axis=0) - margin,
+                                         projected.max(axis=0) + margin))
+    return tuple(obstacles)
+
+
+def _convex_overlap(points: np.ndarray, obstacle: _ConvexObstacle) -> bool:
+    projected = points @ obstacle.axes.T
+    return bool(np.all(projected.max(axis=0) >= obstacle.minimum)
+                and np.all(projected.min(axis=0) <= obstacle.maximum))
 
 
 def _package_uri_to_path(uri: str) -> Path | None:
@@ -107,6 +138,9 @@ def _sphere_points(radius: float, segments: int = 16) -> np.ndarray:
 
 def _geometry_points(geometry: dict) -> np.ndarray | None:
     geometry_type = geometry.get("type")
+    if geometry_type == "convex_mesh":
+        points = np.asarray(geometry.get("points", []), dtype=float)
+        return points if points.ndim == 2 and points.shape[1] == 3 and len(points) else None
     if geometry_type == "mesh":
         path = _package_uri_to_path(str(geometry.get("filename", "")))
         if path is None or not path.is_file():
@@ -170,9 +204,9 @@ class KinematicContactGuard:
     """Clamp kinematic joint steps before collision geometry crosses props.
 
     The guard uses the manifest's collision meshes as point clouds and checks a
-    conservative swept AABB between the previous and proposed joint states.  It
-    is deliberately engine-independent, so the same clamp affects both visual
-    and flattened collision transforms.
+    conservative swept AABB for box props and swept point-cloud projections
+    against the individual cone walls. It is engine-independent, so the same
+    clamp affects both visual and flattened collision transforms.
     """
 
     def __init__(
@@ -184,10 +218,17 @@ class KinematicContactGuard:
         margin: float = 0.0005,
         iterations: int = 12,
         static_only: bool = False,
+        base_transform: np.ndarray | None = None,
     ) -> None:
         self._chain = kinematic_chain
         self._margin = float(margin)
         self._iterations = int(iterations)
+        self._base_transform = np.eye(4) if base_transform is None else np.asarray(base_transform)
+        props = tuple(props)
+        self._cone_walls = tuple(
+            wall for prop in props if prop.kind == "cone_bowl" and prop.static
+            for wall in _cone_obstacles(prop, self._margin)
+        )
         self._obstacles = tuple(
             _prop_aabb(prop, self._margin)
             for prop in props
@@ -198,7 +239,7 @@ class KinematicContactGuard:
 
     @property
     def enabled(self) -> bool:
-        return bool(self._clouds and self._obstacles)
+        return bool(self._clouds and (self._obstacles or self._cone_walls))
 
     def clamp(self, joint_names: tuple[str, ...], previous: np.ndarray, proposed: np.ndarray) -> np.ndarray:
         if not self.enabled or not self._state_crosses_obstacle(joint_names, previous, proposed):
@@ -251,13 +292,16 @@ class KinematicContactGuard:
         for cloud in self._clouds:
             if cloud.source_link not in previous_poses or cloud.source_link not in proposed_poses:
                 continue
-            start = self._world_points(previous_poses[cloud.source_link], cloud.local_points)
-            end = self._world_points(proposed_poses[cloud.source_link], cloud.local_points)
+            start = self._world_points(self._base_transform @ previous_poses[cloud.source_link], cloud.local_points)
+            end = self._world_points(self._base_transform @ proposed_poses[cloud.source_link], cloud.local_points)
             swept = np.vstack((start, end))
             swept_min = swept.min(axis=0)
             swept_max = swept.max(axis=0)
             for obstacle in self._obstacles:
                 if _aabb_overlap(swept_min, swept_max, obstacle.minimum, obstacle.maximum):
+                    return True
+            for wall in self._cone_walls:
+                if _convex_overlap(swept, wall):
                     return True
         return False
 

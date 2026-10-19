@@ -60,3 +60,19 @@ def test_jaw_pid_hold_clears_target_and_effort():
     assert state.target == state.position
     assert state.effort == 0.0
     assert state.integral == 0.0
+
+
+def test_jaw_pid_guard_stops_at_wall_and_allows_retreat():
+    controller = JawPIDController(JawPIDConfig(lower=-0.5, upper=1.0))
+    controller.set_motion_guard(lambda previous, proposed: min(proposed, 0.05))
+    controller.set_command(1.0)
+    for _ in range(100):
+        state = controller.step(0.01)
+        assert state.position <= 0.05
+    assert state.position == 0.05
+    assert state.velocity == 0.0
+    assert state.integral == 0.0
+    controller.set_command(-0.1)
+    for _ in range(150):
+        state = controller.step(0.01)
+    assert state.position < 0.0

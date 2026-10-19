@@ -22,6 +22,11 @@ dynamic environment props, with Isaac providing rendering. See the
 full-cart bash command, collision overlays, and current dynamics limitations.
 Use `scripts/run_dvrk_full.sh --env NAME` to select an environment, for example
 `test_cube`, `ball_tray`, or `match_row`.
+The `ball_tray` environment is an open conical bowl with a downward-pointing
+tip and fifteen dynamic balls inside. Its opening is 20 cm across and its depth
+is 6 cm, keeping the balls near the instruments for shaft, wrist, and jaw motion.
+Cone walls clamp instrument and jaw motion to prevent passing through the bowl;
+the balls remain dynamic under Newton.
 
 ## Collision Asset Generation
 

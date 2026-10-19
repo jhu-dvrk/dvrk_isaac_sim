@@ -35,8 +35,7 @@ class IsaacCRTKWindow:
     _STATE_COMMAND_PLACEHOLDER = "..."
 
     def __init__(self, components: list[Any],
-                 component_lock: threading.RLock | None = None,
-                 *, collision_display=None) -> None:
+                 component_lock: threading.RLock | None = None) -> None:
         import omni.ui as ui
 
         self._ui = ui
@@ -55,23 +54,6 @@ class IsaacCRTKWindow:
                     self._add_performance_panel()
                     for component in components:
                         self._add_component(component)
-                    if collision_display is not None:
-                        with ui.CollapsableFrame("Newton Collisions", collapsed=False):
-                            with ui.HStack(height=26, spacing=5):
-                                visible = ui.SimpleBoolModel(collision_display.visible)
-                                ui.CheckBox(model=visible, width=24)
-                                ui.Label("Collision meshes")
-                                visible.add_value_changed_fn(
-                                    lambda model: collision_display.set_visible(model.as_bool)
-                                )
-                            with ui.HStack(height=26, spacing=5):
-                                visuals = ui.SimpleBoolModel(collision_display.visuals_visible)
-                                ui.CheckBox(model=visuals, width=24)
-                                ui.Label("Instrument visuals")
-                                visuals.add_value_changed_fn(
-                                    lambda model: collision_display.set_visuals_visible(model.as_bool)
-                                )
-                            ui.Button("Frame colliders", clicked_fn=collision_display.frame_colliders)
         self.update()
 
     def _add_performance_panel(self) -> None:

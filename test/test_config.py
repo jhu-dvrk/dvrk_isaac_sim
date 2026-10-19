@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from dvrk_isaac_sim.config import load_robot_config
 from dvrk_isaac_sim.scene import (
@@ -110,24 +111,50 @@ def test_environment_resolution_and_prop_only_environment_loads():
     assert resolve_environment_path(config_path, environment_path) == environment_path
 
 
-def test_ball_tray_environment_has_four_walls_and_dynamic_spheres():
+def test_ball_tray_environment_has_open_cone_and_dynamic_spheres():
     config_path = ROOT / "share" / "isaac_sim.yaml.example"
     environment_path = resolve_environment_path(config_path, "ball_tray")
     environment = load_scene(environment_path)
 
     assert environment.name == "ball_tray"
-    assert len(environment.props) == 14
-    walls = [prop for prop in environment.props if prop.name.startswith("wall_")]
+    assert len(environment.props) == 16
+    bowl = next(prop for prop in environment.props if prop.kind == "cone_bowl")
     balls = [prop for prop in environment.props if prop.kind == "sphere"]
-    assert len(walls) == 4
-    assert all(prop.static for prop in walls)
-    assert all(prop.guard_kinematic_tools for prop in walls)
-    assert len(balls) == 9
+    assert bowl.static and not bowl.dynamic
+    assert bowl.guard_kinematic_tools
+    assert bowl.orientation_xyzw == (0.0, 0.0, 0.0, 1.0)
+    assert bowl.size == (0.20, 0.20, 0.06)
+    assert bowl.position[2] == -0.02
+    assert bowl.position[2] + bowl.size[2] == pytest.approx(0.04)
+    radius = bowl.size[0] / 2 * np.cos(np.pi / 24)
+    slope = radius / bowl.size[2]
+    for ball in balls:
+        center = np.asarray(ball.position) - bowl.position
+        ball_radius = ball.size[0] / 2
+        assert slope * center[2] - np.linalg.norm(center[:2]) > ball_radius * np.sqrt(1 + slope**2)
+        assert center[2] + ball_radius < bowl.size[2]
+    for index, ball in enumerate(balls):
+        for other in balls[index + 1:]:
+            separation = np.linalg.norm(np.asarray(ball.position) - other.position)
+            assert separation >= (ball.size[0] + other.size[0]) / 2 - 1e-9
+    assert len(balls) == 15
     assert all(prop.dynamic for prop in balls)
     assert not any(prop.guard_kinematic_tools for prop in balls)
     assert {round(prop.size[0] * 100, 1) for prop in balls} == {
         1.0, 1.5, 2.0, 2.5, 3.0
     }
+
+
+@pytest.mark.parametrize("flags", ["dynamic: true", "static: false"])
+def test_cone_bowl_requires_static_geometry(tmp_path, flags):
+    path = tmp_path / "cone.yaml"
+    path.write_text(
+        "scene:\n  props:\n    - name: bowl\n      kind: cone_bowl\n"
+        f"      {flags}\n",
+        encoding="ascii",
+    )
+    with pytest.raises(ValueError, match="cone_bowl must be static"):
+        load_scene(path)
 
 
 def test_environment_can_overlay_a_scene():

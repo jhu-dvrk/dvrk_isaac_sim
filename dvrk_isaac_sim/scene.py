@@ -414,7 +414,7 @@ def load_scene(scene_path: str | Path) -> SceneConfig:
             raise ValueError(f"{source}: scene prop is missing name")
         if name in names:
             raise ValueError(f"{source}: duplicate scene entry name {name}")
-        if kind not in {"cube", "sphere", "table"}:
+        if kind not in {"cube", "sphere", "table", "cone_bowl"}:
             raise ValueError(f"{source}: unsupported prop kind {kind!r} for {name}")
         position = _float_tuple(source, configured.get("position", [0.0, 0.0, 0.0]), 3,
                                 f"scene.props[{name}].position")
@@ -438,6 +438,8 @@ def load_scene(scene_path: str | Path) -> SceneConfig:
         dynamic = bool(configured.get("dynamic", False))
         if static and dynamic:
             raise ValueError(f"{source}: scene.props[{name}] cannot be both static and dynamic")
+        if kind == "cone_bowl" and (not static or dynamic):
+            raise ValueError(f"{source}: scene.props[{name}] cone_bowl must be static")
         mass = None
         if "mass" in configured:
             mass = float(configured["mass"])

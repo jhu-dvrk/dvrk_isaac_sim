@@ -242,7 +242,7 @@ def test_worker_can_highlight_instanced_collision_copy():
         worker.render()
         child = stage.GetPrimAtPath(str(copy.GetPath()) + "/Sphere")
         assert not child.IsInstanceProxy()
-        np.testing.assert_allclose(UsdGeom.Gprim(child).GetDisplayColorAttr().Get()[0], (1.0, 0.1, 0.1), atol=1e-7)
+        assert UsdGeom.Imageable(child).ComputeVisibility() == UsdGeom.Tokens.invisible
     finally:
         worker.close()
 
@@ -262,21 +262,22 @@ def test_collision_display_overrides_hidden_guide_and_source_material():
     UsdShade.MaterialBindingAPI.Apply(shape.GetPrim()).Bind(source)
     display = CollisionDisplay(stage, {str(shape.GetPath()): 3})
     assert shape.ComputePurpose() == UsdGeom.Tokens.default_
-    assert shape.ComputeVisibility() == UsdGeom.Tokens.inherited
+    assert shape.ComputeVisibility() == UsdGeom.Tokens.invisible
     material, _ = UsdShade.MaterialBindingAPI(shape).ComputeBoundMaterial()
-    assert str(material.GetPath()).endswith("/Idle")
+    assert str(material.GetPath()) == "/SourceMaterial"
     display.update({3})
+    assert shape.ComputeVisibility() == UsdGeom.Tokens.inherited
     material, _ = UsdShade.MaterialBindingAPI(shape).ComputeBoundMaterial()
     assert str(material.GetPath()).endswith("/Contact")
     display.set_visible(False)
     assert shape.ComputeVisibility() == UsdGeom.Tokens.invisible
-    display.update(set())
-    assert shape.ComputeVisibility() == UsdGeom.Tokens.invisible
     display.set_visible(True)
     assert shape.ComputeVisibility() == UsdGeom.Tokens.inherited
+    display.update(set())
+    assert shape.ComputeVisibility() == UsdGeom.Tokens.invisible
     display.set_visuals_visible(False)
     assert visuals.ComputeVisibility() == UsdGeom.Tokens.invisible
-    assert shape.ComputeVisibility() == UsdGeom.Tokens.inherited
+    assert shape.ComputeVisibility() == UsdGeom.Tokens.invisible
     display.set_visuals_visible(True)
     assert visuals.ComputeVisibility() == UsdGeom.Tokens.inherited
 

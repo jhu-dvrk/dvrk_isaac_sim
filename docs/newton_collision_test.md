@@ -23,10 +23,23 @@ bash ~/dvrk_ws/src/dvrk/dvrk_isaac_sim/scripts/run_dvrk_full.sh --env test_cube
 ```
 
 The same command opens the full Newton cart and the existing MTMR/PSM1 Haply
-system. `--env ball_tray` selects the ball tray, and `--env match_row` selects
+system. `--env ball_tray` selects the open, downward-pointing conical bowl with
+fifteen dynamic balls inside, and `--env match_row` selects
 the three match-like sticks on a table. Interpreter discovery uses
 `DVRK_NEWTON_PYTHON` when set, then the local/workspace virtual environments.
 Device selection is automatic: CUDA when available, CPU otherwise.
+
+The cone has a 20 cm opening, a 6 cm depth, and 3 mm thick walls. Its tip is
+at world z = -0.02 m and its rim at z = 0.04 m. Separate convex wall segments
+keep the interior hollow for full-instrument contacts, including the shaft,
+wrist, and jaws. The bowl enables a cone-aware kinematic motion guard that
+stops arm and jaw motion before instrument collision geometry crosses a wall
+or the tip, while leaving entry through the opening and motion inside free.
+The guard uses the individual wall segments, not the bowl's enclosing box.
+Newton still handles the dynamic balls; the guard is a position clamp, not
+force-feedback or compliant arm dynamics.
+In environment YAML, `kind: cone_bowl` requires `static: true`; `position`
+locates the inner tip and `size` specifies inner opening diameters x/y and depth.
 
 For a single-PSM test:
 

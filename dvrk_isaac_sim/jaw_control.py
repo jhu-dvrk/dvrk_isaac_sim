@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
+from typing import Callable
 
 
 @dataclass(frozen=True)
@@ -54,6 +55,10 @@ class JawPIDController:
         self._integral = 0.0
         self._effort = 0.0
         self._saturated = False
+        self._motion_guard: Callable[[float, float], float] | None = None
+
+    def set_motion_guard(self, guard: Callable[[float, float], float] | None) -> None:
+        self._motion_guard = guard
 
     @property
     def state(self) -> JawPIDState:
@@ -149,6 +154,14 @@ class JawPIDController:
         if abs(position - self._target) < 1e-6 and abs(velocity) < 1e-5:
             position = self._target
             velocity = 0.0
+
+        if self._motion_guard is not None and position != previous_position:
+            guarded = self._clip(self._motion_guard(previous_position, position))
+            if guarded != position:
+                position = guarded
+                velocity = 0.0
+                self._integral = 0.0
+                self._saturated = True
 
         self._position = position
         self._velocity = velocity

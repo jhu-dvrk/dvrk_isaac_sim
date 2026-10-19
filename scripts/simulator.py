@@ -222,6 +222,18 @@ def _spawn_scene_props(props) -> None:
     root = stage.DefinePrim("/World/Environment", "Xform")
     for prop in props:
         prim_path = Sdf.Path(f"/World/Environment/{prop.name}")
+        if prop.kind == "cone_bowl":
+            from dvrk_isaac_sim.environment_geometry import spawn_cone_bowl
+
+            geometry = spawn_cone_bowl(
+                stage, prim_path, prop.size, prop.color or (0.7, 0.7, 0.7, 1.0)
+            )
+            xform = UsdGeom.Xformable(geometry.GetPrim())
+            xform.AddTranslateOp(opSuffix="pose").Set(Gf.Vec3d(*prop.position))
+            xform.AddRotateXYZOp(opSuffix="pose").Set(
+                Gf.Vec3d(*_quaternion_xyzw_to_euler_xyz_degrees(prop.orientation_xyzw))
+            )
+            continue
         if prop.kind == "sphere":
             geometry = UsdGeom.Sphere.Define(stage, prim_path)
             geometry.CreateRadiusAttr(0.5)
@@ -410,9 +422,25 @@ def main() -> int:
                     guard_props,
                     margin=args.table_contact_clearance_m,
                     static_only=bool(guarded_props),
+                    base_transform=model._base_transform,
                 )
                 if guard.enabled:
-                    model.set_motion_guard(guard.clamp)
+                    def guard_arm(names, previous, proposed):
+                        jaw = float(component.jaw_position or 0.0)
+                        return guard.clamp(
+                            names + ("jaw",), np.append(previous, jaw), np.append(proposed, jaw)
+                        )[:-1]
+
+                    def guard_jaw(previous, proposed):
+                        state = model.measured_js()
+                        return float(guard.clamp(
+                            tuple(state.names) + ("jaw",),
+                            np.append(state.position, previous), np.append(state.position, proposed),
+                        )[-1])
+
+                    model.set_motion_guard(guard_arm)
+                    if jaw_controller is not None:
+                        jaw_controller.set_motion_guard(guard_jaw)
                     print(
                         f"{config.name}: kinematic contact guard enabled "
                         f"for {len(args.scene_model.props)} scene prop(s)",
@@ -511,7 +539,6 @@ def main() -> int:
             from dvrk_isaac_sim.isaac_ui import IsaacCRTKWindow
             ui_window = IsaacCRTKWindow(
                 [runtime.component for runtime in runtimes], component_lock,
-                collision_display=collision_backend.display,
             )
 
         # Advance ECM first so every PSM reads the current, not previous-step,
