@@ -53,6 +53,25 @@ PSM Cartesian topics use the current `ECM_view` frame when an ECM is present. Th
 
 The ECM camera must be attached to `ECM_optical`, not directly to the mechanical adaptor frame. This keeps the rendered camera orientation separate from the mechanical endoscope model.
 
+### Haply orientation matching
+
+The single-master `system-MTMR-PSM1-Haply-ROS.json` configuration enables
+`match_MTM_orientation` in the dVRK PSM teleoperation controller. This requires
+rebuilding `sawIntuitiveResearchKitCore` and restarting `dvrk_system`.
+The PSM commanded rotation matches the Haply `measured_cp` rotation numerically
+in the configured teleoperation axes instead of retaining an initial rotation
+offset. Translation remains relative with scale 0.4 and re-anchors on enable
+and clutch release. While clutched, the PSM holds; matching resumes on release.
+A calibrated orientation reset reported by Haply is followed while teleoperation
+is enabled. If calibration disables teleoperation, enable it again afterward.
+
+This option defaults to false for other configurations. Rotation lock takes
+precedence. It does not register physical stylus mounting axes to the tool,
+change the Haply base transform, or override PSM IK and joint limits. Both
+devices must use compatible teleoperation reference axes. Large orientation
+changes can be commanded on enable, clutch release, or recalibration; use this
+configuration only with the simulated PSM and validate clear-space motion first.
+
 ## 5. Endoscope view
 
 The simulator renders the endoscope perspective from a camera attached to `ECM_optical`. Camera pose follows the kinematic ECM state, including yaw, pitch, insertion, and roll.

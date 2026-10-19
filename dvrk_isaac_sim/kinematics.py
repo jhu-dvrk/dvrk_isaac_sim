@@ -249,11 +249,12 @@ class CRTKComponent:
             if use_orientation:
                 # First-order world-frame rotation error. This is compatible
                 # with the angular part of the spatial Jacobian.
-                orientation_error = 0.5 * (
-                    np.cross(pose.orientation[:, 0], target.orientation[:, 0])
-                    + np.cross(pose.orientation[:, 1], target.orientation[:, 1])
-                    + np.cross(pose.orientation[:, 2], target.orientation[:, 2])
-                )
+                relative_rotation = target.orientation @ pose.orientation.T
+                orientation_error = 0.5 * np.array([
+                    relative_rotation[2, 1] - relative_rotation[1, 2],
+                    relative_rotation[0, 2] - relative_rotation[2, 0],
+                    relative_rotation[1, 0] - relative_rotation[0, 1],
+                ])
                 error = np.concatenate((position_error, orientation_error))
             else:
                 error = position_error
@@ -266,11 +267,12 @@ class CRTKComponent:
         pose = self.compute_fk(q)
         position_error = target.position - pose.position
         if use_orientation:
-            orientation_error = 0.5 * (
-                np.cross(pose.orientation[:, 0], target.orientation[:, 0])
-                + np.cross(pose.orientation[:, 1], target.orientation[:, 1])
-                + np.cross(pose.orientation[:, 2], target.orientation[:, 2])
-            )
+            relative_rotation = target.orientation @ pose.orientation.T
+            orientation_error = 0.5 * np.array([
+                relative_rotation[2, 1] - relative_rotation[1, 2],
+                relative_rotation[0, 2] - relative_rotation[2, 0],
+                relative_rotation[1, 0] - relative_rotation[0, 1],
+            ])
             error_norm = float(np.linalg.norm(np.concatenate((position_error, orientation_error))))
         else:
             error_norm = float(np.linalg.norm(position_error))

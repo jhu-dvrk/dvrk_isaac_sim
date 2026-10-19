@@ -89,6 +89,27 @@ def test_psm_pose_ik_reaches_orientation():
     np.testing.assert_allclose(solved.orientation, target.orientation, atol=1e-4)
 
 
+def test_pose_ik_orientation_error_matches_cross_product_form(monkeypatch):
+    robot = CRTKPSM(load_robot_config(ROOT / "share/arms/PSM1.yaml"))
+    target = robot.compute_fk([0.15, -0.1, 0.1, 0.2, -0.15, 0.1])
+    original_solve = np.linalg.solve
+    errors = []
+
+    def capture_solve(matrix, error):
+        errors.append(error.copy())
+        return original_solve(matrix, error)
+
+    seed = np.array([0.0, 0.0, 0.08, 0.0, 0.0, 0.0])
+    pose = robot.compute_fk(seed)
+    expected = 0.5 * sum(
+        np.cross(pose.orientation[:, index], target.orientation[:, index])
+        for index in range(3)
+    )
+    monkeypatch.setattr(np.linalg, "solve", capture_solve)
+    robot.compute_ik(target, seed=seed, max_iterations=1)
+    np.testing.assert_allclose(errors[0][3:], expected, atol=1e-14)
+
+
 def test_dvrk_view_axes_are_derived_from_ecm_optical_axes():
     optical = Pose(np.zeros(3), np.eye(3))
     view = _view_pose_from_optical(optical)

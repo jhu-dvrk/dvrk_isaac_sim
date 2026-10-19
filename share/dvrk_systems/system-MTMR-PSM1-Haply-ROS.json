@@ -65,6 +65,7 @@
                     "configure_parameter": {
                         "MTM_is_haptic": true,
                         "align_MTM": false,
+                        "match_MTM_orientation": true,
                         "start_gripper_threshold": 0.0,
                         "scale": 0.4
                     }
