@@ -1,4 +1,4 @@
-cscene:
+scene:
   name: ball_tray
   base_frame_provider: yaml
   camera:
