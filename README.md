@@ -22,6 +22,62 @@ dynamic environment props, with Isaac providing rendering. See the
 full-cart bash command, collision overlays, and current dynamics limitations.
 Use `scripts/run_dvrk_full.sh --env NAME` to select an environment, for example
 `test_cube`, `ball_tray`, or `match_row`.
+
+### Independent dvrk_newton_ws launcher
+
+From any directory, open Isaac Sim with Newton collisions and Haply:
+
+```bash
+bash ~/dvrk_newton_ws/src/dvrk/dvrk_isaac_sim/scripts/run_dvrk_full.sh --env test_cube
+```
+
+Use `--scene PSM1_420006_mono` to change the robot/camera scene, `--env ball_tray`
+or `--env match_row` to change the objects, and `--system-config /path/to/system.json`
+to select a different Haply system. YAML filenames or explicit paths are accepted.
+Use `--check` to validate configuration and dependencies without starting either
+application. Terminals stay open after exit so startup errors remain visible.
+
+The launcher clears inherited workspace paths, sources ROS Jazzy and only this
+workspace's `install/local_setup.bash`, and uses this workspace's model, generated
+assets, Haply libraries, and `.venv-newton`. It does not source `dvrk_ws`, stop
+the ROS daemon, or terminate other simulator processes. The Isaac Sim installation
+(`ISAAC_SIM_DIR`, default `~/isaacsim`) and system ROS installation can be shared.
+It preserves `ROS_DOMAIN_ID`; concurrent sessions additionally require distinct
+ROS domains and nonconflicting RTSP ports, and cannot share the same Haply hardware.
+
+Build the local packages from a clean shell sourced with ROS Jazzy and this
+workspace's `install/local_setup.bash`:
+
+```bash
+cd ~/dvrk_newton_ws
+ISAAC_SIM_DIR=~/isaacsim colcon build --symlink-install \
+  --packages-select dvrk_isaac_sim sawHaplyServiceCore haply_config haply
+```
+
+The independent Haply sources live under `src/dvrk/cisst-saw/sawHaplyService`,
+including the local orientation-support changes from the original setup.
+The default system controls MTMR/PSM1. Its local
+`share/dvrk_systems/sawHaplyService-JHU-Imerse-0699-069E.json` must match the
+connected base and grip serials. The Haply service must already be running.
+`--check` does not connect to or validate physical devices.
+
+MTMR selects base `0699` and grip `1605`. Ensure that grip is awake before
+launching. Base position and grip orientation come from separate devices:
+selecting a different, stationary grip can leave translation working while
+rotation appears frozen. Do not substitute another detected grip serial unless
+it is the physical grip being used.
+
+For teleoperation troubleshooting, keep exactly one simulator and one Haply
+system running, with teleoperation enabled and the clutch released. Calibration
+of the Haply base does not enable PSM following. Repeated `servo_cp IK failed`
+warnings mean the simulator is rejecting the requested pose; check the target
+workspace and joint limits rather than changing the grip serial.
+
+Cartesian IK uses the shortest rotation vector as its angular error, including
+180-degree mismatches. A half-turn must not be treated as an already-converged
+orientation. Unreachable poses are still rejected, not applied as partial IK
+solutions.
+
 The `ball_tray` environment is an open conical bowl with a downward-pointing
 tip and fifteen dynamic balls inside. Its opening is 20 cm across and its depth
 is 6 cm, keeping the balls near the instruments for shaft, wrist, and jaw motion.

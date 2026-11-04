@@ -89,7 +89,7 @@ def test_psm_pose_ik_reaches_orientation():
     np.testing.assert_allclose(solved.orientation, target.orientation, atol=1e-4)
 
 
-def test_pose_ik_orientation_error_matches_cross_product_form(monkeypatch):
+def test_pose_ik_orientation_error_matches_rotation_vector(monkeypatch):
     robot = CRTKPSM(load_robot_config(ROOT / "share/arms/PSM1.yaml"))
     target = robot.compute_fk([0.15, -0.1, 0.1, 0.2, -0.15, 0.1])
     original_solve = np.linalg.solve
@@ -105,9 +105,51 @@ def test_pose_ik_orientation_error_matches_cross_product_form(monkeypatch):
         np.cross(pose.orientation[:, index], target.orientation[:, index])
         for index in range(3)
     )
+    angle = np.arccos(np.clip(
+        (np.trace(target.orientation @ pose.orientation.T) - 1.0) / 2.0,
+        -1.0, 1.0,
+    ))
+    expected *= angle / np.sin(angle)
     monkeypatch.setattr(np.linalg, "solve", capture_solve)
     robot.compute_ik(target, seed=seed, max_iterations=1)
     np.testing.assert_allclose(errors[0][3:], expected, atol=1e-14)
+
+
+@pytest.mark.parametrize("axis", range(3))
+@pytest.mark.parametrize("max_iterations", [0, 100])
+def test_pose_ik_does_not_accept_half_turn_as_converged(axis, max_iterations):
+    robot = CRTKPSM(load_robot_config(ROOT / "share/arms/PSM1.yaml"))
+    initial = robot.measured_cp()
+    half_turn = -np.eye(3)
+    half_turn[axis, axis] = 1.0
+    target = Pose(initial.position, half_turn @ initial.orientation)
+    result = robot.compute_ik(target, max_iterations=max_iterations)
+    if max_iterations:
+        assert result.iterations > 0
+    else:
+        assert not result.success
+    if result.success:
+        np.testing.assert_allclose(
+            robot.compute_fk(result.position).orientation, target.orientation,
+            atol=1e-4,
+        )
+
+
+def test_pose_ik_tracks_continuous_roll_through_half_turn():
+    robot = CRTKPSM(load_robot_config(ROOT / "share/arms/PSM1.yaml"))
+    previous = robot.measured_js().position
+    for angle in np.linspace(0.0, 3.5, 141):
+        target_q = robot.config.home_position.copy()
+        target_q[3] = angle
+        target = robot.compute_fk(target_q)
+        result = robot.move_cp(target)
+        assert result.success
+        assert np.max(np.abs(result.position - previous)) < 0.05
+        robot.step(0.1)
+        np.testing.assert_allclose(
+            robot.measured_cp().orientation, target.orientation, atol=1e-4,
+        )
+        previous = result.position
 
 
 def test_dvrk_view_axes_are_derived_from_ecm_optical_axes():
