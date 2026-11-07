@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dvrk_simulator_base.cartesian_frames import optical_pose_from_view
+
 from dataclasses import dataclass
 from pathlib import Path
 import time
@@ -267,7 +269,7 @@ class IsaacSimRuntime:
         if self.camera is not None:
             ecm = next((arm for arm in self.arms.values() if arm.config.type == "ECM"), None)
             if ecm is not None:
-                self.camera.set_pose(ecm.model.measured_cp())
+                self.camera.set_pose(optical_pose_from_view(ecm.model.measured_cp()))
             self.camera.start_streaming()
 
         snapshots = {
@@ -324,7 +326,7 @@ class IsaacSimRuntime:
 
         if self.simulation_app is not None and now >= self._next_render:
             if self.camera is not None and ecm is not None:
-                self.camera.set_pose(ecm.model.measured_cp())
+                self.camera.set_pose(optical_pose_from_view(ecm.model.measured_cp()))
             if self.timeline is not None:
                 self.timeline.set_current_time(self._simulation_time)
             self.simulation_app.update()

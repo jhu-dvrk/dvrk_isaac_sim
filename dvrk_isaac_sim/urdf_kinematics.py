@@ -50,7 +50,7 @@ def write_kinematics_manifest(urdf_path: str | Path, output_path: str | Path, mo
     prefix = f"{model}_"
     candidates = ([f"{prefix}tool_tip_link", f"{prefix}tip_link", f"{prefix}wrist_yaw_link", f"{prefix}adaptor_link"]
                   if model.startswith("PSM") else
-                  [f"{prefix}tip_link", f"{prefix}endoscope_frame_link", f"{prefix}adaptor_link"] )
+                  [f"{prefix}tip_link"] )
     links = {joint["child"] for joint in joints} | {joint["parent"] for joint in joints}
     tip = next((candidate for candidate in candidates if candidate in links), None)
     if tip is None:
@@ -126,6 +126,7 @@ def write_kinematics_manifest(urdf_path: str | Path, output_path: str | Path, mo
         "format": 3,
         "model": model,
         "tip_link": tip,
+        "camera_frame": f"{prefix}optical" if model == "ECM" else None,
         "root_link": current,
         "joints": chain,
         "active_joints": active,
