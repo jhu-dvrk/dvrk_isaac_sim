@@ -96,7 +96,8 @@ def convert_model(*, model, output_dir, instrument="420006", endoscope="Si_strai
                   asset_name=None, xacro="xacro", xacro_file=None, parent_link="world",
                   xacro_arg=(), merge_fixed_joints=True, fix_base=True,
                   collision_from_visuals=False, force=False, keep_physics=False,
-                  show_rcm=False):
+                  show_rcm=False, collision_profile=None,
+                  require_instrument_collisions=False):
     """Convert one robot using the current Isaac application."""
     asset_name = asset_name or (
         f"{model}_{instrument}" if model.startswith("PSM")
@@ -120,6 +121,21 @@ def convert_model(*, model, output_dir, instrument="420006", endoscope="Si_strai
             urdf_path = Path(temporary) / f"{model}.urdf"
             _expand_xacro(model, instrument, endoscope, xacro, parent_link, xacro_arg, xacro_path, urdf_path, show_rcm=show_rcm)
             manifest_path = write_kinematics_manifest(urdf_path, asset_dir / "kinematics.json", model)
+            if collision_profile is not None:
+                from dvrk_isaac_sim.collision_primitives import (
+                    apply_collision_profile,
+                    has_instrument_collisions,
+                )
+
+                apply_collision_profile(manifest_path, urdf_path, root, collision_profile)
+                if require_instrument_collisions:
+                    import json
+
+                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                    if not has_instrument_collisions(manifest):
+                        raise RuntimeError(
+                            f"{manifest_path}: missing generated collisions for one or more instrument links"
+                        )
             print(f"Generated kinematics manifest {manifest_path}", flush=True)
             from isaacsim.asset.importer.urdf.impl import URDFImporter, URDFImporterConfig
 
@@ -158,6 +174,8 @@ def main() -> int:
     parser.add_argument("--merge-fixed-joints", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--fix-base", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--collision-from-visuals", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--collision-profile", type=Path, help="instrument collision profile")
+    parser.add_argument("--require-instrument-collisions", action="store_true")
     parser.add_argument("--force", action="store_true", help="replace an existing generated asset for this model")
     parser.add_argument(
         "--keep-physics",

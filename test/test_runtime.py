@@ -23,6 +23,8 @@ def test_runtime_options_defaults():
     assert options.renderer == "RaytracedLighting"
     assert options.simulation_rate_hz == 120.0
     assert options.render_rate_hz == 30.0
+    assert options.collision_backend == "newton"
+    assert options.newton_device == "auto"
 
 
 def test_arm_initial_snapshot_and_stepping():

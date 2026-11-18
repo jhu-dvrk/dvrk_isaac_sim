@@ -1,0 +1,4 @@
+newton[sim,importers]==1.6.0
+usd-core
+vhacdx==0.0.10
+trimesh==5.1.1

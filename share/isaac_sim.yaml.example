@@ -5,3 +5,6 @@ headless: false
 simulation_rate_hz: 120.0
 render_rate_hz: 30.0
 scene: null
+collision_backend: newton
+newton_python: null
+newton_device: auto

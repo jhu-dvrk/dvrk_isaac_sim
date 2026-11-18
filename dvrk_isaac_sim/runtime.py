@@ -5,6 +5,7 @@ from __future__ import annotations
 from dvrk_simulator_base.cartesian_frames import optical_pose_from_view
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
 import time
 from typing import Mapping, Sequence
@@ -34,6 +35,15 @@ class RuntimeOptions:
     render_rate_hz: float = 30.0
     generated_root: Path | None = None
     camera_options: CameraOptions | None = None
+    collision_backend: str = "newton"
+    newton_python: str | None = None
+    newton_device: str = "auto"
+
+    def __post_init__(self) -> None:
+        if self.collision_backend not in {"newton", "none"}:
+            raise ValueError(f"unsupported collision backend: {self.collision_backend!r}")
+        if not isinstance(self.newton_device, str) or not self.newton_device.strip():
+            raise ValueError("newton_device must be a non-empty string")
 
 
 def _generated_variant(generated_dir: Path, robot: RobotConfig) -> tuple[Path, Path]:
@@ -113,10 +123,11 @@ class IsaacSimArm(ArmController):
             raise ValueError(f"unsupported robot type: {config.type}")
 
         self.visual: CRTKUSDVisual | None = None
+        self.physics_sync = None
         super().__init__(config, commands)
         self.jaw_position = self.jaw_setpoint
 
-    def initialize_visual(self) -> None:
+    def initialize_visual(self, *, sync_collisions: bool = False) -> None:
         if self.manifest_path is not None and self.manifest_path.is_file():
             import omni.usd
 
@@ -126,6 +137,22 @@ class IsaacSimArm(ArmController):
                 measured = self.model.measured_js()
                 self.visual.update(measured.names, measured.position,
                                    self.jaw_position if self.config.type == "PSM" else None)
+                if sync_collisions and self.config.type == "PSM":
+                    if self.model._urdf_chain is None:
+                        raise RuntimeError(
+                            f"{self.config.name}: Newton collision sync requires a URDF manifest"
+                        )
+                    from .usd_physics_links import PhysicsLinkSync
+
+                    self.physics_sync = PhysicsLinkSync(
+                        self.config.name,
+                        self.manifest_path,
+                        self.model._urdf_chain,
+                        self.model._base_transform,
+                    )
+                    self.physics_sync.update(
+                        measured.names, measured.position, self.jaw_position
+                    )
 
     def prepare_step(
         self,
@@ -201,6 +228,7 @@ class IsaacSimRuntime:
 
         self.simulation_app = None
         self.camera: IsaacCamera | None = None
+        self.collision_backend = None
         self.command_warnings: list[tuple[str, str]] = []
         self._simulation_time = 0.0
         self._sequence = 0
@@ -234,13 +262,36 @@ class IsaacSimRuntime:
         self.simulation_app.update()
 
         from .assets import convert_model
+        from .collision_decomposition import collision_cache_valid
+        from .collision_primitives import has_instrument_collisions
+        from ament_index_python.packages import get_package_share_directory
+
+        collision_profile = (
+            Path(get_package_share_directory("dvrk_isaac_sim"))
+            / "share/collision_primitives/instrument_collision.yaml"
+        )
+        if self.options.collision_backend == "newton" and not collision_profile.is_file():
+            raise FileNotFoundError(f"Newton collision profile not found: {collision_profile}")
 
         for robot in self.scene_robots:
             asset_path, manifest_path = _generated_variant(self.generated_root, robot)
-            if not asset_path.is_file() or not manifest_path.is_file():
+            needs_conversion = not asset_path.is_file() or not manifest_path.is_file()
+            if not needs_conversion and self.options.collision_backend == "newton" and robot.type == "PSM":
+                try:
+                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    needs_conversion = True
+                else:
+                    needs_conversion = not (
+                        has_instrument_collisions(manifest)
+                        and collision_cache_valid(manifest, collision_profile)
+                    )
+            if needs_conversion:
                 convert_model(model=robot.name, instrument=robot.instrument or "420006",
                               endoscope=robot.endoscope or "Si_straight",
-                              output_dir=self.generated_root, force=True)
+                              output_dir=self.generated_root, force=True,
+                              collision_profile=collision_profile if self.options.collision_backend == "newton" and robot.type == "PSM" else None,
+                              require_instrument_collisions=self.options.collision_backend == "newton" and robot.type == "PSM")
             _reference_usd(
                 asset_path,
                 f"/World/{robot.name}",
@@ -256,7 +307,38 @@ class IsaacSimRuntime:
         self.simulation_app.update()
 
         for arm in self.arms.values():
-            arm.initialize_visual()
+            arm.initialize_visual(sync_collisions=self.options.collision_backend == "newton")
+
+        if self.options.collision_backend == "newton":
+            from .collision_backend import make_collision_backend
+            from .newton_runtime import resolve_newton_python
+            import omni.usd
+
+            stage = omni.usd.get_context().get_stage()
+            physics_links = {
+                name: arm.physics_sync
+                for name, arm in self.arms.items()
+                if arm.physics_sync is not None
+            }
+            self.collision_backend = make_collision_backend(
+                "newton",
+                stage=stage,
+                physics_links=physics_links,
+                has_environment=bool(self.scene_config and self.scene_config.objects),
+                newton_python=Path(resolve_newton_python(self.options.newton_python)),
+                newton_device=self.options.newton_device,
+                initial_time=self._simulation_time,
+            )
+        else:
+            import omni.usd
+            from pxr import UsdPhysics
+
+            stage = omni.usd.get_context().get_stage()
+            for prim in stage.Traverse():
+                if prim.HasAPI(UsdPhysics.CollisionAPI):
+                    UsdPhysics.CollisionAPI(prim).CreateCollisionEnabledAttr().Set(False)
+                if prim.HasAPI(UsdPhysics.RigidBodyAPI):
+                    UsdPhysics.RigidBodyAPI(prim).CreateRigidBodyEnabledAttr().Set(False)
 
         if self.options.camera_options is not None and self.options.camera_options.enabled:
             self.camera = IsaacCamera(self.options.camera_options)
@@ -285,12 +367,58 @@ class IsaacSimRuntime:
         """Import exercise objects with their declared fixed/dynamic behavior."""
         from isaacsim.asset.importer.urdf.impl import URDFImporter, URDFImporterConfig
         import omni.usd
-        from pxr import UsdPhysics
+        from pxr import Gf, Sdf, UsdGeom, UsdPhysics
 
         if self.scene_config.objects:
             stage = omni.usd.get_context().get_stage()
             UsdPhysics.Scene.Define(stage, "/World/PhysicsScene")
+            UsdGeom.Xform.Define(stage, "/World/Environment")
         for item in self.scene_config.objects:
+            settings = item.as_dict()
+            prim_path = f"/World/Environment/{item.name}"
+            if item.shape is not None:
+                stage = omni.usd.get_context().get_stage()
+                size = tuple(float(value) for value in settings["size"])
+                color = tuple(float(value) for value in settings.get("color", (0.7, 0.7, 0.7, 1.0)))
+                if item.shape == "cone_bowl":
+                    from .environment_geometry import spawn_cone_bowl
+
+                    root = spawn_cone_bowl(stage, Sdf.Path(prim_path), size, color)
+                    xform = UsdGeom.Xformable(root.GetPrim())
+                elif item.shape == "box":
+                    cube = UsdGeom.Cube.Define(stage, prim_path)
+                    cube.CreateSizeAttr(1.0)
+                    cube.CreateDisplayColorAttr([Gf.Vec3f(*color[:3])])
+                    cube.CreateDisplayOpacityAttr([color[3]])
+                    xform = UsdGeom.Xformable(cube.GetPrim())
+                    xform.AddScaleOp().Set(Gf.Vec3d(*size))
+                    UsdPhysics.CollisionAPI.Apply(cube.GetPrim())
+                    root = cube
+                elif item.shape == "sphere":
+                    sphere = UsdGeom.Sphere.Define(stage, prim_path)
+                    sphere.CreateRadiusAttr(size[0] * 0.5)
+                    sphere.CreateDisplayColorAttr([Gf.Vec3f(*color[:3])])
+                    sphere.CreateDisplayOpacityAttr([color[3]])
+                    UsdPhysics.CollisionAPI.Apply(sphere.GetPrim())
+                    xform = UsdGeom.Xformable(sphere.GetPrim())
+                    root = sphere
+                else:
+                    raise ValueError(f"unsupported scene object shape: {item.shape}")
+                xform.AddTranslateOp().Set(Gf.Vec3d(*item.position))
+                xform.AddOrientOp().Set(
+                    Gf.Quatd(
+                        item.orientation_xyzw[3],
+                        Gf.Vec3d(*item.orientation_xyzw[:3]),
+                    )
+                )
+                if not item.fixed:
+                    rigid = UsdPhysics.RigidBodyAPI.Apply(root.GetPrim())
+                    rigid.CreateKinematicEnabledAttr().Set(False)
+                    UsdPhysics.MassAPI.Apply(root.GetPrim()).CreateMassAttr().Set(
+                        float(settings["mass"])
+                    )
+                continue
+
             asset_path = resolve_asset_uri(item.asset)
             if asset_path.suffix.lower() == ".urdf":
                 destination = self.generated_root / "objects" / item.name
@@ -306,7 +434,7 @@ class IsaacSimRuntime:
                 asset_path = Path(converted)
             elif asset_path.suffix.lower() not in {".usd", ".usda", ".usdc"}:
                 raise ValueError(f"unsupported Isaac scene object asset: {asset_path}")
-            _reference_usd(asset_path, f"/World/Objects/{item.name}",
+            _reference_usd(asset_path, prim_path,
                            item.position, item.orientation_xyzw)
 
     def step(self) -> dict[str, ArmSnapshot]:
@@ -323,6 +451,21 @@ class IsaacSimRuntime:
             arm.prepare_step(dt, now, ecm_pose, has_ecm=has_ecm)
             self.command_warnings.extend((name, text) for text in arm.command_warnings)
             arm.command_warnings.clear()
+
+        for arm in self.arms.values():
+            if arm.physics_sync is not None:
+                measured = arm.model.measured_js()
+                arm.physics_sync.update(
+                    measured.names, measured.position,
+                    arm.jaw_position if arm.config.type == "PSM" else None,
+                )
+        if self.collision_backend is not None:
+            self.collision_backend.advance(
+                self._simulation_time,
+                playing=True,
+                render_period=dt,
+            )
+            self.collision_backend.render()
 
         if self.simulation_app is not None and now >= self._next_render:
             if self.camera is not None and ecm is not None:
@@ -356,6 +499,9 @@ class IsaacSimRuntime:
 
     def shutdown(self) -> None:
         self._connected = False
+        if self.collision_backend is not None:
+            self.collision_backend.close()
+            self.collision_backend = None
         if self.timeline is not None:
             self.timeline.stop()
             self.timeline = None

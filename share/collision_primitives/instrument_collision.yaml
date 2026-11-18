@@ -1,0 +1,53 @@
+collision_primitives:
+  enabled: true
+  rules:
+    - name: roll_shaft
+      action: replace
+      match:
+        source_link_suffix: roll_link
+        visual_filename_regex: /instruments/roll/
+      fit: cylinder
+      axis: auto
+      slices: 1
+      margin: 0.0001
+      min_size: 0.0002
+
+    - name: wrist_pitch
+      action: replace
+      match:
+        source_link_suffix: wrist_pitch_link
+        visual_filename_regex: /instruments/wrist_pitch/
+      fit: vhacd
+      max_hulls: 3
+      max_vertices: 32
+      resolution: 100000
+
+    - name: wrist_yaw
+      action: replace
+      match:
+        source_link_suffix: wrist_yaw_link
+        visual_filename_regex: /instruments/wrist_yaw/
+      fit: vhacd
+      max_hulls: 3
+      max_vertices: 32
+      resolution: 100000
+
+    - name: jaw_1
+      action: replace
+      match:
+        source_link_suffix: jaw_1_link
+        visual_filename_regex: /instruments/tip/
+      fit: vhacd
+      max_hulls: 4
+      max_vertices: 32
+      resolution: 200000
+
+    - name: jaw_2
+      action: replace
+      match:
+        source_link_suffix: jaw_2_link
+        visual_filename_regex: /instruments/tip/
+      fit: vhacd
+      max_hulls: 4
+      max_vertices: 32
+      resolution: 200000

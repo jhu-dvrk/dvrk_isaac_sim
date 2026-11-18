@@ -9,12 +9,15 @@ import xml.etree.ElementTree as ET
 import numpy as np
 
 from dvrk_simulator_base.urdf_chain import UrdfChain
+from .transforms import rotation_matrix as _rotation
+from .transforms import rpy_matrix as _rpy_matrix
+from .transforms import transform_matrix as _transform
 
 
-def _numbers(value: str | None, count: int) -> list[float]:
+def _numbers(value: str | None, count: int, default: float = 0.0) -> list[float]:
     values = [float(item) for item in (value or "").split()]
     if len(values) != count:
-        return [0.0] * count
+        return [default] * count
     return values
 
 
@@ -40,6 +43,62 @@ def _joint_dict(element: ET.Element) -> dict:
             "offset": float(mimic.attrib.get("offset", "0.0")),
         } if mimic is not None else None),
     }
+
+
+def _geometry_dict(collision: ET.Element) -> dict:
+    geometry = collision.find("geometry")
+    if geometry is None:
+        return {"type": "unknown"}
+    for kind in ("mesh", "box", "sphere", "cylinder"):
+        element = geometry.find(kind)
+        if element is None:
+            continue
+        if kind == "mesh":
+            return {
+                "type": "mesh",
+                "filename": element.attrib.get("filename", ""),
+                "scale": _numbers(element.attrib.get("scale"), 3, default=1.0),
+            }
+        if kind == "box":
+            return {"type": "box", "size": _numbers(element.attrib.get("size"), 3)}
+        if kind == "sphere":
+            return {"type": "sphere", "radius": float(element.attrib.get("radius", 0.0))}
+        return {
+            "type": "cylinder",
+            "radius": float(element.attrib.get("radius", 0.0)),
+            "length": float(element.attrib.get("length", 0.0)),
+        }
+    return {"type": "unknown"}
+
+
+def _relative_visual_path(link_path: str, visual_root: str) -> str:
+    if link_path == visual_root:
+        return ""
+    if link_path.startswith(visual_root + "/"):
+        return link_path[len(visual_root) + 1:]
+    return link_path
+
+
+def _collision_items(
+    root: ET.Element, link_paths: dict[str, str], visual_root: str,
+) -> list[dict]:
+    result = []
+    for link in root.findall("link"):
+        link_name = link.attrib.get("name", "")
+        if not link_name or link_name not in link_paths:
+            continue
+        relative_prim = _relative_visual_path(link_paths[link_name], visual_root)
+        for index, collision in enumerate(link.findall("collision")):
+            origin = collision.find("origin")
+            result.append({
+                "name": collision.attrib.get("name", f"{link_name}_collision_{index}"),
+                "source_link": link_name,
+                "prim": relative_prim,
+                "origin_xyz": _numbers(origin.attrib.get("xyz") if origin is not None else None, 3),
+                "origin_rpy": _numbers(origin.attrib.get("rpy") if origin is not None else None, 3),
+                "geometry": _geometry_dict(collision),
+            })
+    return result
 
 
 def write_kinematics_manifest(urdf_path: str | Path, output_path: str | Path, model: str) -> Path:
@@ -87,6 +146,7 @@ def write_kinematics_manifest(urdf_path: str | Path, output_path: str | Path, mo
             break
         pending = next_pending
 
+    visual_root = "Geometry/world"
     visual_joints = {}
     for joint in joints:
         if joint["type"] not in ("revolute", "continuous", "prismatic"):
@@ -98,13 +158,7 @@ def write_kinematics_manifest(urdf_path: str | Path, output_path: str | Path, mo
         if np.count_nonzero(np.abs(axis) > 1e-8) != 1:
             continue
         visual_path = link_paths[joint["child"]]
-        visual_root = "Geometry/world"
-        if visual_path == visual_root:
-            relative_visual_path = ""
-        elif visual_path.startswith(visual_root + "/"):
-            relative_visual_path = visual_path[len(visual_root) + 1:]
-        else:
-            relative_visual_path = visual_path
+        relative_visual_path = _relative_visual_path(visual_path, visual_root)
         visual_joints[joint["name"]] = {
             "prim": relative_visual_path,
             "operation": "translate" if joint["type"] == "prismatic" else "rotate",
@@ -122,15 +176,18 @@ def write_kinematics_manifest(urdf_path: str | Path, output_path: str | Path, mo
             ),
         }
 
+    collision_items = _collision_items(root, link_paths, visual_root)
     manifest = {
-        "format": 3,
+        "format": 5,
         "model": model,
         "tip_link": tip,
         "camera_frame": f"{prefix}optical" if model == "ECM" else None,
         "root_link": current,
         "joints": chain,
+        "all_joints": joints,
         "active_joints": active,
-        "visual": {"root": "Geometry/world", "joints": visual_joints},
+        "visual": {"root": visual_root, "joints": visual_joints},
+        "collision": {"root": visual_root, "items": collision_items},
     }
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -145,7 +202,10 @@ class UrdfKinematicChain:
         self.manifest_path = Path(manifest_path)
         manifest = json.loads(self.manifest_path.read_text(encoding="utf-8"))
         self.joints = tuple(manifest["joints"])
+        self.all_joints = tuple(manifest.get("all_joints", self.joints))
         self.active_joints = tuple(manifest["active_joints"])
+        self.root_link = str(manifest.get("root_link", ""))
+        self.tip_link = str(manifest.get("tip_link", ""))
 
         self._chains = {}
 
@@ -158,3 +218,49 @@ class UrdfKinematicChain:
         transform[:3, :3] = rotation
         transform[:3, 3] = position
         return transform, jacobian
+
+    def forward_all_links(
+        self, q: np.ndarray, joint_names: tuple[str, ...],
+    ) -> dict[str, np.ndarray]:
+        """Return each URDF link transform, including branches such as jaws."""
+        if q.shape != (len(joint_names),):
+            raise ValueError("joint position has the wrong size")
+        values = dict(zip(joint_names, q))
+        transforms = {self.root_link: np.eye(4)}
+        poses: dict[str, np.ndarray] = {}
+        pending = list(self.all_joints)
+        while pending:
+            unresolved = []
+            progressed = False
+            for joint in pending:
+                parent = joint["parent"]
+                if parent not in transforms:
+                    unresolved.append(joint)
+                    continue
+                transform = transforms[parent] @ _transform(
+                    _rpy_matrix(*joint["origin_rpy"]), joint["origin_xyz"]
+                )
+                joint_type = joint["type"]
+                if joint_type in ("revolute", "continuous", "prismatic"):
+                    mimic = joint["mimic"]
+                    if mimic is None:
+                        position = values.get(joint["name"], 0.0)
+                    else:
+                        position = (
+                            values.get(mimic["joint"], 0.0) * mimic["multiplier"]
+                            + mimic["offset"]
+                        )
+                    axis = np.asarray(joint["axis"], dtype=float)
+                    if not np.linalg.norm(axis):
+                        axis = np.array([0.0, 0.0, 1.0])
+                    if joint_type in ("revolute", "continuous"):
+                        transform = transform @ _transform(_rotation(axis, position), (0.0, 0.0, 0.0))
+                    else:
+                        transform = transform @ _transform(np.eye(3), axis * position)
+                poses[joint["child"]] = transform.copy()
+                transforms[joint["child"]] = transform
+                progressed = True
+            if not progressed:
+                break
+            pending = unresolved
+        return poses

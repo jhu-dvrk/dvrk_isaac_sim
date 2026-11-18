@@ -29,8 +29,17 @@ accepts repeated `--scene` arguments to combine a patient cart with an exercise.
 Missing PSM assets are converted inside the worker's existing Isaac application.
 The ECM remains a kinematic camera frame without a visible endoscope mesh.
 Exercise URDF objects are imported with their declared fixed/dynamic behavior;
-USD objects retain their authored physics. PSMs remain visual kinematic robots;
-this backend does not implement Newton/PyBullet's grasp attachment behavior.
+scene primitives and instrument collision proxies are simulated by Newton in a
+separate Python worker. Newton is the default collision backend; set
+`collision_backend: none` in the simulator configuration to disable physics.
+
+The `test_cube`, `ball_tray`, and `match_row` scenes provide contact test setups.
+Instrument collision proxies are generated from PSM visual meshes using the
+profile in `share/collision_primitives/instrument_collision.yaml`; V-HACD runs
+during conversion, not during simulation. Install the isolated worker and
+collision-generation dependencies with `pip install -r requirements-collision.txt`,
+then set `newton_python` in the simulator config or `DVRK_NEWTON_PYTHON` to that
+environment's interpreter. See [installation](docs/installation.md) for details.
 
 Control and rendering are scheduled independently, defaulting to 120 Hz and
 30 Hz. Camera poses are applied before rendering and images are extracted

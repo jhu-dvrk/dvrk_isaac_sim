@@ -20,6 +20,9 @@ def test_load_simulator_config_defaults(tmp_path):
     assert config.state_publish_rate_hz == 100.0
     assert config.command_queue_capacity == 32
     assert config.scene is None
+    assert config.collision_backend == "newton"
+    assert config.newton_python is None
+    assert config.newton_device == "auto"
 
 
 def test_load_simulator_config_custom(tmp_path):
@@ -55,6 +58,13 @@ def test_invalid_rates(tmp_path):
     path = tmp_path / "invalid_rate.yaml"
     path.write_text("simulation_rate_hz: -1.0\n", encoding="utf-8")
     with pytest.raises(ValueError, match="rates must be positive"):
+        load_simulator_config(path)
+
+
+def test_invalid_collision_backend(tmp_path):
+    path = tmp_path / "invalid_collision.yaml"
+    path.write_text("collision_backend: physx\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="collision_backend"):
         load_simulator_config(path)
 
 

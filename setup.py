@@ -34,6 +34,15 @@ scene_files = [str(path) for path in sorted(Path("share/scenes").glob("*.yaml"))
 if scene_files:
     data_files.append((f"share/{package_name}/share/scenes", scene_files))
 
+collision_profile_files = [
+    str(path) for path in sorted(Path("share/collision_primitives").glob("*.yaml"))
+]
+if collision_profile_files:
+    data_files.append((
+        f"share/{package_name}/share/collision_primitives",
+        collision_profile_files,
+    ))
+
 
 setup(
     name=package_name,
@@ -44,7 +53,7 @@ setup(
     zip_safe=True,
     maintainer="Anton Deguet",
     maintainer_email="anton.deguet@jhu.edu",
-    description="ROS 2 and Isaac Sim kinematic simulation for dVRK PSMs and ECMs.",
+    description="ROS 2 and Isaac Sim simulation for dVRK arms with Newton contact dynamics.",
     license="Apache-2.0",
     entry_points={
         "console_scripts": [

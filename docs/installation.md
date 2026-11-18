@@ -133,6 +133,35 @@ export DVRK_MODEL_PATH=/path/to/dvrk_model
 
 The simulator uses the Xacro/URDF and mesh files from this repository as the source of truth. Generated USD assets are cached separately; see the [design specification](design.md#51-usd-conversion-and-caching).
 
+## Newton contact backend
+
+The simulator defaults to Newton for instrument/environment contacts. Newton
+and V-HACD run in an isolated Python environment so their Warp/USD dependencies
+do not replace Isaac Sim's libraries. Create the environment with the Python
+version supported by the installed Newton release, then install the repository
+requirements:
+
+```bash
+python3.12 -m venv /path/to/dvrk_newton
+/path/to/dvrk_newton/bin/pip install -r requirements-collision.txt
+```
+
+Set `newton_python` in `share/isaac_sim.yaml` (or `DVRK_NEWTON_PYTHON`) to
+`/path/to/dvrk_newton/bin/python`. The collision profile generates shaft
+cylinders and bounded convex hulls for wrist/jaw visual meshes during asset
+conversion. Generated collision data is cached with input hashes and rebuilt
+when the profile or source meshes change.
+
+The interaction scenes can be launched by name:
+
+```bash
+ros2 launch dvrk_isaac_sim simulator.launch.py scene:=test_cube headless:=true
+ros2 launch dvrk_isaac_sim simulator.launch.py scene:=ball_tray headless:=true
+ros2 launch dvrk_isaac_sim simulator.launch.py scene:=match_row headless:=true
+```
+
+Set `collision_backend: none` to disable physics for a run.
+
 ## Custom CRTK messages in Isaac Sim Python
 
 `crtk_msgs/msg/OperatingState` is a ROS 2 custom message rather than an Isaac Sim built-in message. When Python code running inside Isaac Sim imports it, the ROS 2 workspace containing `crtk_msgs` must have been sourced before Isaac Sim starts:
