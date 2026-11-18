@@ -9,16 +9,67 @@ from collections import Counter
 import numpy as np
 
 
+def _cylinder_display_mesh(cylinder, segments=128):
+    radius = float(cylinder.GetRadiusAttr().Get())
+    height = float(cylinder.GetHeightAttr().Get())
+    axis = str(cylinder.GetAxisAttr().Get()).lower()
+    basis = {
+        "x": ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0), (1.0, 0.0, 0.0)),
+        "y": ((0.0, 0.0, 1.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
+        "z": ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+    }
+    if axis not in basis:
+        raise ValueError(f"Unsupported USD cylinder axis: {axis!r}")
+    u, v, direction = (np.asarray(vector, dtype=float) for vector in basis[axis])
+    points = []
+    for sign in (-1.0, 1.0):
+        center = direction * (sign * height * 0.5)
+        points.extend(
+            (center + radius * (u * math.cos(angle) + v * math.sin(angle))).tolist()
+            for angle in (2.0 * math.pi * index / segments for index in range(segments))
+        )
+    bottom_center = len(points)
+    points.append((-direction * (height * 0.5)).tolist())
+    top_center = len(points)
+    points.append((direction * (height * 0.5)).tolist())
+
+    faces = []
+    normals = []
+    for index in range(segments):
+        next_index = (index + 1) % segments
+        top_index = segments + index
+        top_next_index = segments + next_index
+        angle = 2.0 * math.pi * index / segments
+        next_angle = 2.0 * math.pi * next_index / segments
+        radial = u * math.cos(angle) + v * math.sin(angle)
+        next_radial = u * math.cos(next_angle) + v * math.sin(next_angle)
+        faces.extend((
+            (index, next_index, top_next_index),
+            (index, top_next_index, top_index),
+            (bottom_center, next_index, index),
+            (top_center, top_index, top_next_index),
+        ))
+        normals.extend((
+            radial.tolist(), next_radial.tolist(), next_radial.tolist(),
+            radial.tolist(), next_radial.tolist(), radial.tolist(),
+            (-direction).tolist(), (-direction).tolist(), (-direction).tolist(),
+            direction.tolist(), direction.tolist(), direction.tolist(),
+        ))
+    return points, faces, normals
+
+
 class CollisionDisplay:
     """Render the imported collider geometry independently of source styling."""
 
-    def __init__(self, stage, shape_paths):
+    def __init__(self, stage, shape_paths, *, show_contacts=False):
         from pxr import Sdf, UsdGeom, UsdShade
 
         self.stage = stage
         self.shapes = {}
+        self.display_prims = {}
         self.materials = {}
         self.visible = True
+        self.show_contacts = bool(show_contacts)
         self.visuals_visible = True
         self.active_shapes = frozenset()
         self.visual_roots = {
@@ -26,15 +77,16 @@ class CollisionDisplay:
             for path in shape_paths if "/PhysicsLinks/" in path
         }
         self.previous_active = None
-        material = UsdShade.Material.Define(stage, "/World/NewtonCollisionMaterials/Contact")
-        shader = UsdShade.Shader.Define(stage, "/World/NewtonCollisionMaterials/Contact/Surface")
-        shader.CreateIdAttr("UsdPreviewSurface")
-        shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set((0.1, 1.0, 0.1))
-        shader.CreateInput("emissiveColor", Sdf.ValueTypeNames.Color3f).Set((0.025, 0.25, 0.025))
-        shader.CreateInput("opacity", Sdf.ValueTypeNames.Float).Set(0.45)
-        shader.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(1.0)
-        material.CreateSurfaceOutput().ConnectToSource(shader.ConnectableAPI(), "surface")
-        self.materials[True] = material
+        if self.show_contacts:
+            material = UsdShade.Material.Define(stage, "/World/NewtonCollisionMaterials/Contact")
+            shader = UsdShade.Shader.Define(stage, "/World/NewtonCollisionMaterials/Contact/Surface")
+            shader.CreateIdAttr("UsdPreviewSurface")
+            shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set((0.1, 1.0, 0.1))
+            shader.CreateInput("emissiveColor", Sdf.ValueTypeNames.Color3f).Set((0.025, 0.25, 0.025))
+            shader.CreateInput("opacity", Sdf.ValueTypeNames.Float).Set(0.45)
+            shader.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(1.0)
+            material.CreateSurfaceOutput().ConnectToSource(shader.ConnectableAPI(), "surface")
+            self.materials[True] = material
         for path, shape in shape_paths.items():
             if "/PhysicsLinks/" not in path:
                 continue
@@ -48,8 +100,31 @@ class CollisionDisplay:
                     imageable.CreatePurposeAttr().Set(UsdGeom.Tokens.default_)
                     imageable.CreateVisibilityAttr().Set(UsdGeom.Tokens.inherited)
                 ancestor = ancestor.GetParent()
+            display_prim = prim
+            if self.show_contacts and prim.IsA(UsdGeom.Cylinder):
+                display_prim = self._create_cylinder_display(prim, UsdGeom)
+                UsdGeom.Imageable(prim).CreateVisibilityAttr().Set(UsdGeom.Tokens.invisible)
+            self.display_prims[path] = display_prim
             self.shapes[path] = shape
         self.update(set())
+
+    def _create_cylinder_display(self, prim, UsdGeom):
+        cylinder = UsdGeom.Cylinder(prim)
+        points, faces, normals = _cylinder_display_mesh(cylinder)
+        parent_path = str(prim.GetPath().GetParentPath())
+        display_path = f"{parent_path}/{prim.GetName()}_ContactDisplay"
+        mesh = UsdGeom.Mesh.Define(self.stage, display_path)
+        mesh.CreatePointsAttr().Set(points)
+        mesh.CreateFaceVertexCountsAttr().Set([3] * len(faces))
+        mesh.CreateFaceVertexIndicesAttr().Set([index for face in faces for index in face])
+        mesh.CreateNormalsAttr().Set(normals)
+        mesh.SetNormalsInterpolation(UsdGeom.Tokens.faceVarying)
+        mesh.CreateSubdivisionSchemeAttr().Set(UsdGeom.Tokens.none)
+        mesh_xform = UsdGeom.Xformable(mesh)
+        mesh_xform.ClearXformOpOrder()
+        mesh_xform.AddTransformOp().Set(UsdGeom.Xformable(prim).GetLocalTransformation())
+        UsdGeom.Imageable(mesh).CreatePurposeAttr().Set(UsdGeom.Tokens.default_)
+        return mesh.GetPrim()
 
     def update(self, active_shapes):
         from pxr import UsdGeom, UsdShade
@@ -59,9 +134,9 @@ class CollisionDisplay:
         if active_shapes == self.previous_active:
             return
         for path, shape in self.shapes.items():
-            prim = self.stage.GetPrimAtPath(path)
+            prim = self.display_prims[path]
             imageable = UsdGeom.Imageable(prim)
-            active = shape in active_shapes
+            active = self.show_contacts and shape in active_shapes
             imageable.CreateVisibilityAttr().Set(
                 UsdGeom.Tokens.inherited if self.visible and active else UsdGeom.Tokens.invisible
             )
@@ -79,9 +154,9 @@ class CollisionDisplay:
 
         self.visible = bool(visible)
         for path, shape in self.shapes.items():
-            UsdGeom.Imageable(self.stage.GetPrimAtPath(path)).CreateVisibilityAttr().Set(
+            UsdGeom.Imageable(self.display_prims[path]).CreateVisibilityAttr().Set(
                 UsdGeom.Tokens.inherited
-                if self.visible and shape in self.active_shapes
+                if self.visible and self.show_contacts and shape in self.active_shapes
                 else UsdGeom.Tokens.invisible
             )
 

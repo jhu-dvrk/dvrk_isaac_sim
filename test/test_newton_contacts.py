@@ -160,7 +160,7 @@ def test_newton_usd_prop_rests_on_table():
     np.testing.assert_allclose(UsdGeom.Xformable(table).GetOrderedXformOps()[0].Get(), (1.0, 1.0, 0.1))
 
 
-def test_newton_prescribed_box_pose_and_contact_highlight():
+def test_newton_prescribed_box_contact_keeps_overlay_hidden_by_default():
     stage = Usd.Stage.CreateInMemory()
     UsdGeom.SetStageMetersPerUnit(stage, 1.0)
     UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
@@ -187,7 +187,8 @@ def test_newton_prescribed_box_pose_and_contact_highlight():
     body_pose = world.state.body_q.numpy()[world.body_paths[str(body.GetPath())]]
     np.testing.assert_allclose(body_pose[:3], (0.0, 0.0, 0.2), atol=1e-6)
     assert world.contact_count > 0
-    np.testing.assert_allclose(cube.GetDisplayColorAttr().Get()[0], (0.1, 1.0, 0.1), atol=1e-7)
+    assert UsdGeom.Imageable(cube).ComputeVisibility() == UsdGeom.Tokens.invisible
+    assert cube.GetDisplayColorAttr().Get() is None
 
 
 def test_isolated_worker_updates_scaled_dynamic_prop():
@@ -260,7 +261,7 @@ def test_collision_display_overrides_hidden_guide_and_source_material():
     shape.CreateVisibilityAttr().Set(UsdGeom.Tokens.invisible)
     source = UsdShade.Material.Define(stage, "/SourceMaterial")
     UsdShade.MaterialBindingAPI.Apply(shape.GetPrim()).Bind(source)
-    display = CollisionDisplay(stage, {str(shape.GetPath()): 3})
+    display = CollisionDisplay(stage, {str(shape.GetPath()): 3}, show_contacts=True)
     assert shape.ComputePurpose() == UsdGeom.Tokens.default_
     assert shape.ComputeVisibility() == UsdGeom.Tokens.invisible
     material, _ = UsdShade.MaterialBindingAPI(shape).ComputeBoundMaterial()
@@ -280,6 +281,56 @@ def test_collision_display_overrides_hidden_guide_and_source_material():
     assert shape.ComputeVisibility() == UsdGeom.Tokens.invisible
     display.set_visuals_visible(True)
     assert visuals.ComputeVisibility() == UsdGeom.Tokens.inherited
+
+
+def test_collision_display_uses_smooth_mesh_for_cylinder_contacts():
+    from pxr import UsdShade
+    from dvrk_isaac_sim.newton_contacts import CollisionDisplay
+
+    stage = Usd.Stage.CreateInMemory()
+    root = UsdGeom.Xform.Define(stage, "/World/PSM1/PhysicsLinks")
+    body = UsdGeom.Xform.Define(stage, str(root.GetPath()) + "/shaft")
+    cylinder = UsdGeom.Cylinder.Define(stage, str(body.GetPath()) + "/Collision")
+    cylinder.CreateRadiusAttr().Set(0.01)
+    cylinder.CreateHeightAttr().Set(0.4)
+    UsdGeom.Xformable(cylinder).AddTranslateOp().Set((0.1, 0.2, 0.3))
+    display = CollisionDisplay(stage, {str(cylinder.GetPath()): 3}, show_contacts=True)
+
+    source = cylinder.GetPrim()
+    overlay = stage.GetPrimAtPath(str(body.GetPath()) + "/Collision_ContactDisplay")
+    mesh = UsdGeom.Mesh(overlay)
+    assert UsdGeom.Imageable(source).ComputeVisibility() == UsdGeom.Tokens.invisible
+    assert len(mesh.GetPointsAttr().Get()) == 258
+    assert len(mesh.GetFaceVertexCountsAttr().Get()) == 512
+    assert len(mesh.GetNormalsAttr().Get()) == len(mesh.GetFaceVertexIndicesAttr().Get())
+    assert mesh.GetNormalsInterpolation() == UsdGeom.Tokens.faceVarying
+    np.testing.assert_allclose(
+        np.asarray(UsdGeom.Xformable(overlay).ComputeLocalToWorldTransform(Usd.TimeCode.Default())),
+        np.asarray(UsdGeom.Xformable(source).ComputeLocalToWorldTransform(Usd.TimeCode.Default())),
+    )
+    points = np.asarray(mesh.GetPointsAttr().Get())
+    np.testing.assert_allclose(points[:, :2].min(axis=0), [-0.01, -0.01], atol=1e-8)
+    np.testing.assert_allclose(points[:, :2].max(axis=0), [0.01, 0.01], atol=1e-8)
+    np.testing.assert_allclose((points[:, 2].min(), points[:, 2].max()), (-0.2, 0.2), atol=1e-8)
+
+    display.update({3})
+    assert UsdGeom.Imageable(source).ComputeVisibility() == UsdGeom.Tokens.invisible
+    assert UsdGeom.Imageable(overlay).ComputeVisibility() == UsdGeom.Tokens.inherited
+    material, _ = UsdShade.MaterialBindingAPI(overlay).ComputeBoundMaterial()
+    assert str(material.GetPath()).endswith("/Contact")
+
+
+def test_collision_display_hides_contact_overlay_by_default():
+    from dvrk_isaac_sim.newton_contacts import CollisionDisplay
+
+    stage = Usd.Stage.CreateInMemory()
+    root = UsdGeom.Xform.Define(stage, "/World/PSM1/PhysicsLinks")
+    shape = UsdGeom.Sphere.Define(stage, str(root.GetPath()) + "/Jaw/Collision")
+    display = CollisionDisplay(stage, {str(shape.GetPath()): 3})
+
+    display.update({3})
+
+    assert UsdGeom.Imageable(shape).ComputeVisibility() == UsdGeom.Tokens.invisible
 
 
 @pytest.mark.parametrize("kind", ["box", "capsule", "cylinder", "sphere"])

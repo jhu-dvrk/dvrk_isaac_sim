@@ -64,7 +64,11 @@ Flattened instrument collision geometry is red and turns green when
 its Newton shape participates in a generated contact during the latest physics
 interval. The performance log includes `newton-contacts`. This count includes
 all generated contacts, including environment contacts; it is not a grip-force
-measurement. Dynamic prop poses are rendered from Newton's output.
+measurement. Dynamic prop poses are rendered from Newton's output. Green
+contact highlighting is disabled by default; enable `show_contacts` on
+`CollisionDisplay` to opt in to the contact overlay. Cylinder contacts use a
+smooth-shaded, 128-segment display mesh when that overlay is enabled; the
+physics collider remains the original analytic USD cylinder.
 Overlapping proxies belonging to the same instrument are filtered; cross-arm
 and instrument/environment pairs are retained.
 

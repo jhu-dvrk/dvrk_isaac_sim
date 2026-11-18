@@ -93,7 +93,7 @@ def make_collision_backend(
         initial_time=initial_time,
     )
     print(
-        "Newton collision backend: red colliders turn green on contact; "
+        "Newton collision backend: contact overlay disabled; "
         "instrument and jaws remain kinematic",
         flush=True,
     )
