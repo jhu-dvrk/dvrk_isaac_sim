@@ -142,11 +142,7 @@ class NewtonContactWorld:
                     raise RuntimeError(f"Newton proxy {path} must have a free root")
                 self.kinematic[path] = (body, int(starts[joint]), int(velocity_starts[joint]))
             else:
-                if not np.allclose(
-                    UsdGeom.Xformable(prim.GetParent()).ComputeLocalToWorldTransform(Usd.TimeCode.Default()),
-                    np.eye(4),
-                ):
-                    raise RuntimeError(f"Newton dynamic prop {path} requires an identity parent transform")
+                parent_inverse = self._parent_inverse(prim, path, UsdGeom, Usd)
                 scale = self._world_scale(prim, UsdGeom, Usd)
                 xform = UsdGeom.Xformable(prim)
                 xform.ClearXformOpOrder()
@@ -156,7 +152,7 @@ class NewtonContactWorld:
                     from pxr import Gf
 
                     xform.AddScaleOp().Set(Gf.Vec3f(*[float(value) for value in scale]))
-                self.dynamic[path] = (body, translation, orientation)
+                self.dynamic[path] = (body, translation, orientation, parent_inverse)
         for root in roots:
             for prim in Usd.PrimRange(stage.GetPrimAtPath(root)):
                 if prim.HasAPI(UsdPhysics.CollisionAPI):
@@ -219,6 +215,32 @@ class NewtonContactWorld:
         matrix = np.asarray(UsdGeom.Xformable(prim).ComputeLocalToWorldTransform(Usd.TimeCode.Default()))
         return np.linalg.norm(matrix[:3, :3], axis=1)
 
+    @staticmethod
+    def _parent_inverse(prim, path, UsdGeom, Usd):
+        """World-to-parent matrix used to write Newton world poses as local ops.
+
+        Parents only hold the static initial placement of a prop, so the
+        inverse stays valid for the whole simulation.
+        """
+        matrix = UsdGeom.Xformable(prim.GetParent()).ComputeLocalToWorldTransform(Usd.TimeCode.Default())
+        if not np.allclose(np.linalg.norm(np.asarray(matrix)[:3, :3], axis=1), 1.0):
+            raise RuntimeError(f"Newton dynamic prop {path} requires an unscaled parent transform")
+        return matrix.GetInverse()
+
+    @staticmethod
+    def _local_pose(pose, parent_inverse, Gf):
+        """Convert a Newton world pose (xyz + quat xyzw) to parent-local parts."""
+        world = Gf.Matrix4d(
+            Gf.Rotation(Gf.Quatd(float(pose[6]), Gf.Vec3d(*[float(value) for value in pose[3:6]]))),
+            Gf.Vec3d(*[float(value) for value in pose[:3]]),
+        )
+        transform = Gf.Transform(world * parent_inverse)
+        quaternion = transform.GetRotation().GetQuat()
+        return (
+            Gf.Vec3d(transform.GetTranslation()),
+            Gf.Quatf(quaternion.GetReal(), Gf.Vec3f(*quaternion.GetImaginary())),
+        )
+
     def advance(self, elapsed, targets=None):
         from pxr import Gf, Usd, UsdGeom
 
@@ -266,10 +288,10 @@ class NewtonContactWorld:
         from pxr import Gf
 
         poses = self.state.body_q.numpy()
-        for body, translation, orientation in self.dynamic.values():
-            pose = poses[body]
-            translation.Set(Gf.Vec3d(*[float(value) for value in pose[:3]]))
-            orientation.Set(Gf.Quatf(float(pose[6]), Gf.Vec3f(*[float(value) for value in pose[3:6]])))
+        for body, translation, orientation, parent_inverse in self.dynamic.values():
+            local_translation, local_orientation = self._local_pose(poses[body], parent_inverse, Gf)
+            translation.Set(local_translation)
+            orientation.Set(local_orientation)
         if not hasattr(self, "display"):
             self.display = CollisionDisplay(self.stage, self.shape_paths)
         self.display.update(self.active_shapes)
@@ -315,10 +337,11 @@ class NewtonContactProcess:
             self.shape_paths = result["shape_paths"]
             for path in result["dynamic"]:
                 prim = stage.GetPrimAtPath(path)
+                parent_inverse = NewtonContactWorld._parent_inverse(prim, path, UsdGeom, Usd)
                 scale = NewtonContactWorld._world_scale(prim, UsdGeom, Usd)
                 xform = UsdGeom.Xformable(prim)
                 xform.ClearXformOpOrder()
-                self.dynamic[path] = (xform.AddTranslateOp(), xform.AddOrientOp())
+                self.dynamic[path] = (xform.AddTranslateOp(), xform.AddOrientOp(), parent_inverse)
                 if not np.allclose(scale, 1.0):
                     from pxr import Gf
 
@@ -367,10 +390,11 @@ class NewtonContactProcess:
     def render(self):
         from pxr import Gf
 
-        for path, (translation, orientation) in self.dynamic.items():
-            pose = self.poses[path]
-            translation.Set(Gf.Vec3d(*pose[:3]))
-            orientation.Set(Gf.Quatf(pose[6], Gf.Vec3f(*pose[3:6])))
+        for path, (translation, orientation, parent_inverse) in self.dynamic.items():
+            local_translation, local_orientation = NewtonContactWorld._local_pose(
+                self.poses[path], parent_inverse, Gf)
+            translation.Set(local_translation)
+            orientation.Set(local_orientation)
         self.display.update(self.active_shapes)
 
     def close(self):

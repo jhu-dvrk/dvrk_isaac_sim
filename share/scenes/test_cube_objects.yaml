@@ -1,0 +1,16 @@
+scene:
+  name: test_cube_objects
+  objects:
+    - name: test_table
+      shape: box
+      position: [0.0, 0.0, -0.025]
+      size: [0.8, 0.8, 0.08]
+      fixed: true
+      color: [1.0, 1.0, 1.0, 1.0]
+    - name: test_cube
+      shape: box
+      position: [0.0, 0.0, 0.03]
+      size: [0.03, 0.03, 0.03]
+      fixed: false
+      mass: 0.03
+      color: [1.0, 0.2, 0.2, 1.0]

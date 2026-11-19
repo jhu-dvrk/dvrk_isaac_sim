@@ -16,6 +16,7 @@
   <exec_depend>dvrk_simulator_base</exec_depend>
   <exec_depend>dvrk_arm_description</exec_depend>
   <exec_depend>dvrk_model</exec_depend>
+  <exec_depend>haply_config</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>std_msgs</exec_depend>

@@ -145,3 +145,70 @@ def test_arm_servo_preserves_independent_jaw_move():
     arm.commands.submit_servo("servo_jp", arm.config.home_position)
     arm.prepare_step(1.0 / 120.0, 1.01)
     assert arm.jaw_trajectory is not None
+
+
+def test_scene_shape_objects_author_rotation_and_unscaled_placement(monkeypatch):
+    pytest.importorskip("pxr")
+    import math
+    import sys
+    import types
+
+    from pxr import Gf, Usd, UsdGeom
+
+    from dvrk_isaac_sim.runtime import IsaacSimRuntime
+    from dvrk_simulator_base.scene import SceneConfig, SceneObject
+
+    stage = Usd.Stage.CreateInMemory()
+
+    omni = types.ModuleType("omni")
+    omni_usd = types.ModuleType("omni.usd")
+    context = types.SimpleNamespace(get_stage=lambda: stage)
+    omni_usd.get_context = lambda: context
+    omni.usd = omni_usd
+    importer = types.ModuleType("isaacsim.asset.importer.urdf.impl")
+    importer.URDFImporter = object
+    importer.URDFImporterConfig = object
+    for name, module in {
+        "omni": omni,
+        "omni.usd": omni_usd,
+        "isaacsim": types.ModuleType("isaacsim"),
+        "isaacsim.asset": types.ModuleType("isaacsim.asset"),
+        "isaacsim.asset.importer": types.ModuleType("isaacsim.asset.importer"),
+        "isaacsim.asset.importer.urdf": types.ModuleType("isaacsim.asset.importer.urdf"),
+        "isaacsim.asset.importer.urdf.impl": importer,
+    }.items():
+        monkeypatch.setitem(sys.modules, name, module)
+
+    half_sqrt2 = math.sqrt(0.5)
+    runtime = IsaacSimRuntime.__new__(IsaacSimRuntime)
+    runtime.scene_config = SceneConfig(
+        name="test",
+        robots=(),
+        objects=(
+            SceneObject(
+                name="table",
+                asset=None,
+                fixed=True,
+                position=(0.0, 0.0, -0.025),
+                orientation_xyzw=(0.0, 0.0, half_sqrt2, half_sqrt2),
+                settings={"size": (0.8, 0.8, 0.08)},
+                shape="box",
+            ),
+        ),
+    )
+    runtime._load_scene_objects()
+
+    prim = stage.GetPrimAtPath("/World/Environment/table")
+    xform = UsdGeom.Xformable(prim)
+    assert [op.GetOpName() for op in xform.GetOrderedXformOps()] == [
+        "xformOp:translate", "xformOp:orient", "xformOp:scale",
+    ]
+    orient = prim.GetAttribute("xformOp:orient").Get()
+    assert orient is not None
+    assert orient.GetReal() == pytest.approx(half_sqrt2)
+    assert tuple(orient.GetImaginary()) == pytest.approx((0.0, 0.0, half_sqrt2))
+    matrix = xform.ComputeLocalToWorldTransform(Usd.TimeCode.Default())
+    transform = Gf.Transform(matrix)
+    # placement must not be multiplied by the box scale
+    assert tuple(transform.GetTranslation()) == pytest.approx((0.0, 0.0, -0.025))
+    assert tuple(transform.GetScale()) == pytest.approx((0.8, 0.8, 0.08))

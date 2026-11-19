@@ -75,5 +75,6 @@ def test_ecm_manifest_includes_endoscope_tip_transform(tmp_path):
     pose = robot.measured_cp()
     # The scope's fixed links cancel the adaptor offset at zero insertion.
     np.testing.assert_allclose(pose.position, [0., 0., -0.02], atol=1e-8)
-    np.testing.assert_allclose(pose.orientation[:, 2], [0., 0., -1.], atol=1e-8)
+    # The URDF tip frame points +X along the scope (the viewing direction).
+    np.testing.assert_allclose(pose.orientation[:, 0], [0., 0., -1.], atol=1e-8)
     assert robot._urdf_chain is not None

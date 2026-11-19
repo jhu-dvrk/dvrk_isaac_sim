@@ -64,13 +64,15 @@ def test_stereo_eye_positions_use_optical_left_axis():
     camera = IsaacCamera.__new__(IsaacCamera)
     camera.options = CameraOptions(baseline_m=0.006)
     camera._cameras = [Camera(), Camera()]
-    # Exercise ROS optical stereo offsets with a rotated camera.
+    # The URDF ECM tip frame: +X forward along the scope; +Y points left.
     rotation = np.array([[0., 1., 0.], [0., 0., -1.], [-1., 0., 0.]])
     pose = Pose(np.array([0.1, 0.2, 0.3]), rotation)
     camera.set_pose(pose)
     left, right = [eye.pose for eye in camera._cameras]
-    np.testing.assert_allclose(left['position'], pose.position - rotation[:, 0] * 0.003)
-    np.testing.assert_allclose(right['position'], pose.position + rotation[:, 0] * 0.003)
-    assert left['camera_axes'] == right['camera_axes'] == 'ros'
+    np.testing.assert_allclose(left['position'], pose.position + rotation[:, 1] * 0.003)
+    np.testing.assert_allclose(right['position'], pose.position - rotation[:, 1] * 0.003)
+    assert left['camera_axes'] == right['camera_axes'] == 'world'
+    from dvrk_simulator_base.rotations import rotation_to_quaternion_wxyz
+    np.testing.assert_allclose(left['orientation'], rotation_to_quaternion_wxyz(rotation))
     np.testing.assert_allclose(left['orientation'], right['orientation'])
     assert camera._pose_ready

@@ -24,8 +24,10 @@ def main() -> int:
     config_path = args.config.expanduser().resolve()
     simulator = load_simulator_config(config_path)
     scenes = sorted((root / "share" / "scenes").glob("*.yaml"))
+    cart_path = root / "share" / "scenes" / "ECM_PSM1_PSM2_PSM3_mono.yaml"
     for scene_path in scenes:
-        scene = load_installed_scene_config(scene_path)
+        selection = [cart_path, scene_path] if scene_path.stem.endswith("_objects") else scene_path
+        scene = load_installed_scene_config(selection)
         print(f"OK {scene_path.name}: {len(scene.robots)} robots, camera={scene.camera.mode}")
     print(f"OK {config_path.name}: renderer={simulator.renderer}, scenes={len(scenes)}")
     return 0

@@ -20,6 +20,7 @@ data_files = [
         str(path) for path in sorted(Path("share/dvrk_systems").glob("*.json"))
     ]),
     (f"share/{package_name}/launch", [
+        "launch/haply.launch.py",
         "launch/simulator.launch.py",
         "launch/test_scene.launch.py",
     ]),

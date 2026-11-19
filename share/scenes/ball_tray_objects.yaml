@@ -1,0 +1,114 @@
+scene:
+  name: ball_tray_objects
+  objects:
+    - name: cone_bowl
+      shape: cone_bowl
+      position: [0.0, 0.0, -0.02]
+      size: [0.20, 0.20, 0.06]
+      fixed: true
+      color: [0.36, 0.40, 0.42, 1.0]
+    - name: ball_01
+      shape: sphere
+      position: [-0.0175, -0.0275, 0.013]
+      size: [0.01, 0.01, 0.01]
+      fixed: false
+      mass: 0.0005
+      color: [0.92, 0.24, 0.18, 1.0]
+    - name: ball_015
+      shape: sphere
+      position: [-0.005, -0.0275, 0.0155]
+      size: [0.015, 0.015, 0.015]
+      fixed: false
+      mass: 0.0018
+      color: [0.95, 0.52, 0.16, 1.0]
+    - name: ball_02
+      shape: sphere
+      position: [0.0125, -0.0275, 0.018]
+      size: [0.02, 0.02, 0.02]
+      fixed: false
+      mass: 0.0042
+      color: [0.91, 0.78, 0.20, 1.0]
+    - name: ball_025
+      shape: sphere
+      position: [-0.025, -0.0025, 0.0205]
+      size: [0.025, 0.025, 0.025]
+      fixed: false
+      mass: 0.0082
+      color: [0.38, 0.70, 0.34, 1.0]
+    - name: ball_03
+      shape: sphere
+      position: [0.0025, -0.0025, 0.023]
+      size: [0.03, 0.03, 0.03]
+      fixed: false
+      mass: 0.0141
+      color: [0.15, 0.63, 0.69, 1.0]
+    - name: ball_02_b
+      shape: sphere
+      position: [0.0275, -0.0025, 0.018]
+      size: [0.02, 0.02, 0.02]
+      fixed: false
+      mass: 0.0042
+      color: [0.28, 0.43, 0.83, 1.0]
+    - name: ball_015_b
+      shape: sphere
+      position: [-0.0175, 0.025, 0.0155]
+      size: [0.015, 0.015, 0.015]
+      fixed: false
+      mass: 0.0018
+      color: [0.55, 0.35, 0.76, 1.0]
+    - name: ball_025_b
+      shape: sphere
+      position: [0.0025, 0.025, 0.0205]
+      size: [0.025, 0.025, 0.025]
+      fixed: false
+      mass: 0.0082
+      color: [0.82, 0.31, 0.55, 1.0]
+    - name: ball_01_b
+      shape: sphere
+      position: [0.02, 0.025, 0.013]
+      size: [0.01, 0.01, 0.01]
+      fixed: false
+      mass: 0.0005
+      color: [0.82, 0.38, 0.22, 1.0]
+    - name: ball_02_c
+      shape: sphere
+      position: [0.055, 0.0, 0.027]
+      size: [0.02, 0.02, 0.02]
+      fixed: false
+      mass: 0.0042
+      color: [0.92, 0.24, 0.18, 1.0]
+    - name: ball_02_d
+      shape: sphere
+      position: [0.0275, 0.0476314, 0.027]
+      size: [0.02, 0.02, 0.02]
+      fixed: false
+      mass: 0.0042
+      color: [0.95, 0.52, 0.16, 1.0]
+    - name: ball_02_e
+      shape: sphere
+      position: [-0.0275, 0.0476314, 0.027]
+      size: [0.02, 0.02, 0.02]
+      fixed: false
+      mass: 0.0042
+      color: [0.38, 0.70, 0.34, 1.0]
+    - name: ball_02_f
+      shape: sphere
+      position: [-0.055, 0.0, 0.027]
+      size: [0.02, 0.02, 0.02]
+      fixed: false
+      mass: 0.0042
+      color: [0.15, 0.63, 0.69, 1.0]
+    - name: ball_02_g
+      shape: sphere
+      position: [-0.0275, -0.0476314, 0.027]
+      size: [0.02, 0.02, 0.02]
+      fixed: false
+      mass: 0.0042
+      color: [0.28, 0.43, 0.83, 1.0]
+    - name: ball_02_h
+      shape: sphere
+      position: [0.0275, -0.0476314, 0.027]
+      size: [0.02, 0.02, 0.02]
+      fixed: false
+      mass: 0.0042
+      color: [0.82, 0.31, 0.55, 1.0]

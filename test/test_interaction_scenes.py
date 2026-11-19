@@ -30,3 +30,24 @@ def test_interaction_scene_loads_objects(name, expected_objects):
     assert all(robot.name in {"PSM1", "ECM"} for robot in scene.robots)
     assert scene.camera.mode == "off"
     assert next(item for item in scene.objects if item.name in expected_objects).shape
+
+
+@pytest.mark.parametrize("name", ["test_cube", "ball_tray", "match_row"])
+def test_full_cart_with_interaction_objects_preserves_robots_and_camera(name):
+    scene_root = Path(__file__).resolve().parents[1] / "share" / "scenes"
+    arms_root = Path(get_package_share_directory("dvrk_arm_description")) / "arms"
+    resolver = SceneResolver((scene_root,))
+    cart_path = scene_root / "ECM_PSM1_PSM2_PSM3_stereo_rtsp.yaml"
+    cart = load_scene_config(cart_path, robot_config_root=arms_root, resolver=resolver)
+    scene = load_scene_config(
+        [cart_path, scene_root / f"{name}_objects.yaml"],
+        robot_config_root=arms_root,
+        resolver=resolver,
+    )
+    standalone = load_scene_config(
+        scene_root / f"{name}.yaml", robot_config_root=arms_root, resolver=resolver,
+    )
+
+    assert [robot.name for robot in scene.robots] == [robot.name for robot in cart.robots]
+    assert scene.camera == cart.camera
+    assert scene.objects == standalone.objects

@@ -1,34 +1,6 @@
 scene:
   name: match_row
-  include: PSM1_420006_mono
+  include: [PSM1_420006_mono, match_row_objects.yaml]
   camera:
     mode: "off"
     owner: ECM
-  objects:
-    - name: match_table
-      shape: box
-      position: [0.0, 0.0, -0.025]
-      size: [0.8, 0.8, 0.08]
-      fixed: true
-      color: [0.82, 0.84, 0.82, 1.0]
-    - name: match_left
-      shape: box
-      position: [-0.035, 0.0, 0.0275]
-      size: [0.002, 0.002, 0.025]
-      fixed: false
-      mass: 0.00006
-      color: [0.93, 0.72, 0.43, 1.0]
-    - name: match_center
-      shape: box
-      position: [0.0, 0.0, 0.0275]
-      size: [0.002, 0.002, 0.025]
-      fixed: false
-      mass: 0.00006
-      color: [0.93, 0.72, 0.43, 1.0]
-    - name: match_right
-      shape: box
-      position: [0.035, 0.0, 0.0275]
-      size: [0.002, 0.002, 0.025]
-      fixed: false
-      mass: 0.00006
-      color: [0.93, 0.72, 0.43, 1.0]

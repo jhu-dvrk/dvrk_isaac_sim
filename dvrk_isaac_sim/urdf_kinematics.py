@@ -13,6 +13,9 @@ from .transforms import rotation_matrix as _rotation
 from .transforms import rpy_matrix as _rpy_matrix
 from .transforms import transform_matrix as _transform
 
+# Kinematics manifest schema version; conversions older than this are stale.
+MANIFEST_FORMAT = 5
+
 
 def _numbers(value: str | None, count: int, default: float = 0.0) -> list[float]:
     values = [float(item) for item in (value or "").split()]
@@ -178,7 +181,7 @@ def write_kinematics_manifest(urdf_path: str | Path, output_path: str | Path, mo
 
     collision_items = _collision_items(root, link_paths, visual_root)
     manifest = {
-        "format": 5,
+        "format": MANIFEST_FORMAT,
         "model": model,
         "tip_link": tip,
         "camera_frame": f"{prefix}optical" if model == "ECM" else None,

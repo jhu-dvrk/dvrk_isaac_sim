@@ -191,6 +191,72 @@ def test_newton_prescribed_box_contact_keeps_overlay_hidden_by_default():
     assert cube.GetDisplayColorAttr().Get() is None
 
 
+def _define_nested_dynamic_prop(stage):
+    """Mimic a URDF exercise object: body nested under a transformed reference prim."""
+    from pxr import Gf
+
+    UsdGeom.Xform.Define(stage, "/World")
+    UsdGeom.Xform.Define(stage, "/World/Environment")
+    holder = UsdGeom.Xform.Define(stage, "/World/Environment/cube")
+    holder_xform = UsdGeom.Xformable(holder)
+    holder_xform.AddTranslateOp().Set((0.1, -0.05, 0.3))
+    holder_xform.AddOrientOp().Set(Gf.Quatf(0.9238795, Gf.Vec3f(0.0, 0.0, 0.3826834)))
+    UsdGeom.Xform.Define(stage, "/World/Environment/cube/Geometry")
+    body = UsdGeom.Xform.Define(stage, "/World/Environment/cube/Geometry/cube")
+    UsdPhysics.RigidBodyAPI.Apply(body.GetPrim())
+    sphere = UsdGeom.Sphere.Define(stage, "/World/Environment/cube/Geometry/cube/Collision")
+    sphere.CreateRadiusAttr().Set(0.03)
+    UsdPhysics.CollisionAPI.Apply(sphere.GetPrim())
+    return body
+
+
+def _assert_prim_matches_world_pose(prim, pose):
+    from pxr import Gf
+
+    expected = Gf.Matrix4d(
+        Gf.Rotation(Gf.Quatd(float(pose[6]), Gf.Vec3d(*[float(v) for v in pose[3:6]]))),
+        Gf.Vec3d(*[float(v) for v in pose[:3]]),
+    )
+    actual = UsdGeom.Xformable(prim).ComputeLocalToWorldTransform(Usd.TimeCode.Default())
+    np.testing.assert_allclose(np.asarray(actual), np.asarray(expected), atol=1e-6)
+
+
+def test_newton_dynamic_prop_supports_transformed_parent():
+    stage = Usd.Stage.CreateInMemory()
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+    UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
+    body = _define_nested_dynamic_prop(stage)
+    world = NewtonContactWorld(stage, ["/World/Environment"], device="cpu")
+    path = str(body.GetPath())
+    initial = world.state.body_q.numpy()[world.body_paths[path]]
+    np.testing.assert_allclose(initial[:3], (0.1, -0.05, 0.3), atol=1e-6)
+    for _ in range(12):
+        world.advance(1.0 / 120.0)
+    world.render()
+    pose = world.state.body_q.numpy()[world.body_paths[path]]
+    assert pose[2] < 0.3
+    _assert_prim_matches_world_pose(body.GetPrim(), pose)
+
+
+def test_isolated_worker_updates_dynamic_prop_under_transformed_parent():
+    import sys
+    from dvrk_isaac_sim.newton_contacts import NewtonContactProcess
+
+    stage = Usd.Stage.CreateInMemory()
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+    UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
+    body = _define_nested_dynamic_prop(stage)
+    worker = NewtonContactProcess(stage, ["/World/Environment"], python=sys.executable)
+    try:
+        worker.advance(0.1)
+        worker.render()
+        pose = worker.poses[str(body.GetPath())]
+        assert pose[2] < 0.3
+        _assert_prim_matches_world_pose(body.GetPrim(), pose)
+    finally:
+        worker.close()
+
+
 def test_isolated_worker_updates_scaled_dynamic_prop():
     import sys
     from dvrk_isaac_sim.newton_contacts import NewtonContactProcess

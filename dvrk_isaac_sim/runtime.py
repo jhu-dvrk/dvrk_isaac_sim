@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from dvrk_simulator_base.cartesian_frames import optical_pose_from_view
-
 from dataclasses import dataclass
 import json
 from pathlib import Path
@@ -92,14 +90,17 @@ def _reference_usd(path: Path | None, prim_path: str, position=None, orientation
 
 def _setup_scene_lighting() -> None:
     import omni.usd
-    from pxr import Sdf, UsdLux
+    from pxr import Gf, UsdGeom, UsdLux
 
     stage = omni.usd.get_context().get_stage()
-    distant_light = UsdLux.DistantLight.Define(stage, Sdf.Path("/World/DistantLight"))
-    distant_light.CreateIntensityAttr(3000.0)
-    distant_light.AddRotateXYZOp().Set((-60.0, 30.0, 0.0))
-    dome_light = UsdLux.DomeLight.Define(stage, Sdf.Path("/World/DomeLight"))
-    dome_light.CreateIntensityAttr(500.0)
+    dome = UsdLux.DomeLight.Define(stage, "/World/Lighting/DomeLight")
+    dome.CreateColorAttr(Gf.Vec3f(0.22, 0.22, 0.22))
+    dome.CreateIntensityAttr(450.0)
+    key = UsdLux.DistantLight.Define(stage, "/World/Lighting/KeyLight")
+    key.CreateColorAttr(Gf.Vec3f(1.0, 0.96, 0.90))
+    key.CreateIntensityAttr(1800.0)
+    key.CreateAngleAttr(0.5)
+    UsdGeom.Xformable(key.GetPrim()).AddRotateXYZOp().Set(Gf.Vec3f(35.0, -25.0, -30.0))
 
 
 class IsaacSimArm(ArmController):
@@ -264,6 +265,7 @@ class IsaacSimRuntime:
         from .assets import convert_model
         from .collision_decomposition import collision_cache_valid
         from .collision_primitives import has_instrument_collisions
+        from .urdf_kinematics import MANIFEST_FORMAT
         from ament_index_python.packages import get_package_share_directory
 
         collision_profile = (
@@ -276,16 +278,20 @@ class IsaacSimRuntime:
         for robot in self.scene_robots:
             asset_path, manifest_path = _generated_variant(self.generated_root, robot)
             needs_conversion = not asset_path.is_file() or not manifest_path.is_file()
-            if not needs_conversion and self.options.collision_backend == "newton" and robot.type == "PSM":
+            if not needs_conversion:
                 try:
                     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
                 except (OSError, json.JSONDecodeError):
                     needs_conversion = True
                 else:
-                    needs_conversion = not (
-                        has_instrument_collisions(manifest)
-                        and collision_cache_valid(manifest, collision_profile)
-                    )
+                    # Stale manifests predate kinematic frame conventions such
+                    # as the ECM tip/view change and must be regenerated.
+                    needs_conversion = int(manifest.get("format", 0)) < MANIFEST_FORMAT
+                    if not needs_conversion and self.options.collision_backend == "newton" and robot.type == "PSM":
+                        needs_conversion = not (
+                            has_instrument_collisions(manifest)
+                            and collision_cache_valid(manifest, collision_profile)
+                        )
             if needs_conversion:
                 convert_model(model=robot.name, instrument=robot.instrument or "420006",
                               endoscope=robot.endoscope or "Si_straight",
@@ -351,7 +357,7 @@ class IsaacSimRuntime:
         if self.camera is not None:
             ecm = next((arm for arm in self.arms.values() if arm.config.type == "ECM"), None)
             if ecm is not None:
-                self.camera.set_pose(optical_pose_from_view(ecm.model.measured_cp()))
+                self.camera.set_pose(ecm.model.measured_cp())
             self.camera.start_streaming()
 
         snapshots = {
@@ -391,7 +397,6 @@ class IsaacSimRuntime:
                     cube.CreateDisplayColorAttr([Gf.Vec3f(*color[:3])])
                     cube.CreateDisplayOpacityAttr([color[3]])
                     xform = UsdGeom.Xformable(cube.GetPrim())
-                    xform.AddScaleOp().Set(Gf.Vec3d(*size))
                     UsdPhysics.CollisionAPI.Apply(cube.GetPrim())
                     root = cube
                 elif item.shape == "sphere":
@@ -405,12 +410,19 @@ class IsaacSimRuntime:
                 else:
                     raise ValueError(f"unsupported scene object shape: {item.shape}")
                 xform.AddTranslateOp().Set(Gf.Vec3d(*item.position))
+                # AddOrientOp() authors a float-precision op; setting a Gf.Quatd
+                # on it is a USD type mismatch that Kit only logs, silently
+                # dropping the configured rotation.
                 xform.AddOrientOp().Set(
-                    Gf.Quatd(
-                        item.orientation_xyzw[3],
-                        Gf.Vec3d(*item.orientation_xyzw[:3]),
+                    Gf.Quatf(
+                        float(item.orientation_xyzw[3]),
+                        Gf.Vec3f(*[float(v) for v in item.orientation_xyzw[:3]]),
                     )
                 )
+                if item.shape == "box":
+                    # Scale must come after translate/orient in xformOpOrder so
+                    # it only sizes the cube instead of scaling its placement.
+                    xform.AddScaleOp().Set(Gf.Vec3f(*size))
                 if not item.fixed:
                     rigid = UsdPhysics.RigidBodyAPI.Apply(root.GetPrim())
                     rigid.CreateKinematicEnabledAttr().Set(False)
@@ -469,7 +481,7 @@ class IsaacSimRuntime:
 
         if self.simulation_app is not None and now >= self._next_render:
             if self.camera is not None and ecm is not None:
-                self.camera.set_pose(optical_pose_from_view(ecm.model.measured_cp()))
+                self.camera.set_pose(ecm.model.measured_cp())
             if self.timeline is not None:
                 self.timeline.set_current_time(self._simulation_time)
             self.simulation_app.update()

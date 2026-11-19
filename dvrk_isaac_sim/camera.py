@@ -193,12 +193,13 @@ class IsaacCamera:
         return graph
 
     def set_pose(self, pose: Pose) -> None:
+        """Place the camera from the URDF ECM tip frame (X forward along the scope)."""
         orientation = _quaternion_wxyz(pose.orientation)
         for index, camera in enumerate(self._cameras):
             position = pose.position.copy()
             if self.options.mode == "stereo":
-                position += -pose.orientation[:, 0] * (self.options.baseline_m / 2.0) * (1.0 if index == 0 else -1.0)
-            camera.set_world_pose(position=position, orientation=orientation, camera_axes="ros")
+                position += pose.orientation[:, 1] * (self.options.baseline_m / 2.0) * (1.0 if index == 0 else -1.0)
+            camera.set_world_pose(position=position, orientation=orientation, camera_axes="world")
         self._pose_ready = True
 
     def start_streaming(self) -> None:
