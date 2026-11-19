@@ -1,0 +1,6 @@
+scene:
+  name: peg_transfer
+  include: [PSM1_420006_mono, peg_transfer_objects.yaml]
+  camera:
+    mode: "off"
+    owner: ECM

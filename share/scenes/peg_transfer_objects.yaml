@@ -1,0 +1,3 @@
+scene:
+  name: peg_transfer_objects
+  include: peg_transfer_simulab.yaml

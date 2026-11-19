@@ -53,7 +53,7 @@ class CollisionDisplay:
 
 
 class NewtonContactWorld:
-    def __init__(self, stage, roots, *, device="cuda:0", max_step=1.0 / 240.0, nconmax=8192):
+    def __init__(self, stage, roots, *, device="cuda:0", max_step=1.0 / 240.0, nconmax=16384):
         if isinstance(nconmax, bool):
             raise ValueError("nconmax must be a positive integer")
         try:

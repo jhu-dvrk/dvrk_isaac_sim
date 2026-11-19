@@ -34,7 +34,7 @@ def test_pipeline_filters_self_contacts_but_preserves_interinstrument_contacts(n
             UsdPhysics.CollisionAPI.Apply(shape.GetPrim())
     kwargs = {} if nconmax is None else {"nconmax": nconmax}
     world = NewtonContactWorld(stage, roots, device="cpu", **kwargs)
-    capacity = 8192 if nconmax is None else nconmax
+    capacity = 16384 if nconmax is None else nconmax
     assert world.nconmax == capacity
     assert world.pipeline.rigid_contact_max == capacity
     assert world.contacts.rigid_contact_max == capacity

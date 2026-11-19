@@ -3,6 +3,7 @@ from pathlib import Path
 from ament_index_python.packages import get_package_share_directory
 import pytest
 
+from dvrk_isaac_sim.configuration import scene_search_paths
 from dvrk_simulator_base.scene import SceneResolver, load_scene_config
 
 
@@ -12,12 +13,13 @@ from dvrk_simulator_base.scene import SceneResolver, load_scene_config
         ("test_cube", {"test_table", "test_cube"}),
         ("ball_tray", {"cone_bowl", "ball_01", "ball_02_h"}),
         ("match_row", {"match_table", "match_left", "match_center", "match_right"}),
+        ("peg_transfer", {"peg_transfer_board", "triangle_orange_1", "triangle_green_3"}),
     ],
 )
 def test_interaction_scene_loads_objects(name, expected_objects):
     scene_root = Path(__file__).resolve().parents[1] / "share" / "scenes"
     arms_root = Path(get_package_share_directory("dvrk_arm_description")) / "arms"
-    resolver = SceneResolver((scene_root,))
+    resolver = SceneResolver((scene_root, *scene_search_paths(None)))
 
     scene = load_scene_config(
         scene_root / f"{name}.yaml",
@@ -29,14 +31,16 @@ def test_interaction_scene_loads_objects(name, expected_objects):
     assert {item.name for item in scene.objects} >= expected_objects
     assert all(robot.name in {"PSM1", "ECM"} for robot in scene.robots)
     assert scene.camera.mode == "off"
-    assert next(item for item in scene.objects if item.name in expected_objects).shape
+    for item in scene.objects:
+        if item.name in expected_objects:
+            assert item.asset if name == "peg_transfer" else item.shape
 
 
-@pytest.mark.parametrize("name", ["test_cube", "ball_tray", "match_row"])
+@pytest.mark.parametrize("name", ["test_cube", "ball_tray", "match_row", "peg_transfer"])
 def test_full_cart_with_interaction_objects_preserves_robots_and_camera(name):
     scene_root = Path(__file__).resolve().parents[1] / "share" / "scenes"
     arms_root = Path(get_package_share_directory("dvrk_arm_description")) / "arms"
-    resolver = SceneResolver((scene_root,))
+    resolver = SceneResolver((scene_root, *scene_search_paths(None)))
     cart_path = scene_root / "ECM_PSM1_PSM2_PSM3_stereo_rtsp.yaml"
     cart = load_scene_config(cart_path, robot_config_root=arms_root, resolver=resolver)
     scene = load_scene_config(
