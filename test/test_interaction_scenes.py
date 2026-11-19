@@ -3,7 +3,6 @@ from pathlib import Path
 from ament_index_python.packages import get_package_share_directory
 import pytest
 
-from dvrk_isaac_sim.configuration import scene_search_paths
 from dvrk_simulator_base.scene import SceneResolver, load_scene_config
 
 
@@ -19,7 +18,7 @@ from dvrk_simulator_base.scene import SceneResolver, load_scene_config
 def test_interaction_scene_loads_objects(name, expected_objects):
     scene_root = Path(__file__).resolve().parents[1] / "share" / "scenes"
     arms_root = Path(get_package_share_directory("dvrk_arm_description")) / "arms"
-    resolver = SceneResolver((scene_root, *scene_search_paths(None)))
+    resolver = SceneResolver((scene_root,))
 
     scene = load_scene_config(
         scene_root / f"{name}.yaml",
@@ -40,7 +39,7 @@ def test_interaction_scene_loads_objects(name, expected_objects):
 def test_full_cart_with_interaction_objects_preserves_robots_and_camera(name):
     scene_root = Path(__file__).resolve().parents[1] / "share" / "scenes"
     arms_root = Path(get_package_share_directory("dvrk_arm_description")) / "arms"
-    resolver = SceneResolver((scene_root, *scene_search_paths(None)))
+    resolver = SceneResolver((scene_root,))
     cart_path = scene_root / "ECM_PSM1_PSM2_PSM3_stereo_rtsp.yaml"
     cart = load_scene_config(cart_path, robot_config_root=arms_root, resolver=resolver)
     scene = load_scene_config(

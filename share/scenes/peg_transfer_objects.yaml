@@ -1,3 +1,42 @@
 scene:
   name: peg_transfer_objects
-  include: peg_transfer_simulab.yaml
+  objects:
+    - name: table
+      asset: package://dvrk_simulator_base/share/assets/table/table.urdf
+      fixed: true
+      position: [0.0, 0.0, 0.030]
+    - name: peg_transfer_board
+      asset: package://dvrk_isaac_sim/share/assets/peg_transfer/peg_transfer_simulab.urdf
+      fixed: true
+      position: [0.0, 0.0, 0.033]
+    # Each bore starts centered on its peg, 0.25 mm above the board surface.
+    - name: triangle_orange_1
+      asset: package://dvrk_isaac_sim/share/assets/peg_transfer/triangular_block_orange.urdf
+      fixed: false
+      position: [0.015, -0.026, 0.0435]
+      orientation_xyzw: [0.0, 0.0, 0.7071067811865476, 0.7071067811865476]
+    - name: triangle_orange_2
+      asset: package://dvrk_isaac_sim/share/assets/peg_transfer/triangular_block_orange.urdf
+      fixed: false
+      position: [0.015, 0.000, 0.0435]
+      orientation_xyzw: [0.0, 0.0, 0.7071067811865476, 0.7071067811865476]
+    - name: triangle_orange_3
+      asset: package://dvrk_isaac_sim/share/assets/peg_transfer/triangular_block_orange.urdf
+      fixed: false
+      position: [0.015, 0.026, 0.0435]
+      orientation_xyzw: [0.0, 0.0, 0.7071067811865476, 0.7071067811865476]
+    - name: triangle_green_1
+      asset: package://dvrk_isaac_sim/share/assets/peg_transfer/triangular_block_green.urdf
+      fixed: false
+      position: [0.042, -0.026, 0.0435]
+      orientation_xyzw: [0.0, 0.0, 0.7071067811865476, 0.7071067811865476]
+    - name: triangle_green_2
+      asset: package://dvrk_isaac_sim/share/assets/peg_transfer/triangular_block_green.urdf
+      fixed: false
+      position: [0.042, 0.000, 0.0435]
+      orientation_xyzw: [0.0, 0.0, 0.7071067811865476, 0.7071067811865476]
+    - name: triangle_green_3
+      asset: package://dvrk_isaac_sim/share/assets/peg_transfer/triangular_block_green.urdf
+      fixed: false
+      position: [0.042, 0.026, 0.0435]
+      orientation_xyzw: [0.0, 0.0, 0.7071067811865476, 0.7071067811865476]

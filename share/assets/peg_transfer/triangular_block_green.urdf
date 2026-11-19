@@ -1,0 +1,36 @@
+<?xml version="1.0" ?>
+<robot name="triangular_block_green">
+  <material name="green">
+    <color rgba="0.05 0.66 0.38 1"/>
+  </material>
+
+  <link name="triangular_block_green">
+    <contact>
+      <lateral_friction value="1.0"/>
+      <rolling_friction value="0.0"/>
+      <contact_cfm value="0.0"/>
+      <contact_erp value="1.0"/>
+    </contact>
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="0.01"/>
+      <inertia ixx="4.0e-7" ixy="0" ixz="0"
+               iyy="4.0e-7" iyz="0" izz="3.0e-7"/>
+    </inertial>
+    <visual>
+      <geometry><mesh filename="meshes/triangular_block.obj"/></geometry>
+      <material name="green"/>
+    </visual>
+    <!-- Separate convex pieces keep the through-hole open in URDF importers. -->
+    <collision><geometry><mesh filename="meshes/convex/convex_0.obj"/></geometry></collision>
+    <collision><geometry><mesh filename="meshes/convex/convex_1.obj"/></geometry></collision>
+    <collision><geometry><mesh filename="meshes/convex/convex_2.obj"/></geometry></collision>
+    <collision><geometry><mesh filename="meshes/convex/convex_3.obj"/></geometry></collision>
+    <collision><geometry><mesh filename="meshes/convex/convex_4.obj"/></geometry></collision>
+    <collision><geometry><mesh filename="meshes/convex/convex_5.obj"/></geometry></collision>
+    <collision><geometry><mesh filename="meshes/convex/convex_6.obj"/></geometry></collision>
+    <collision><geometry><mesh filename="meshes/convex/convex_7.obj"/></geometry></collision>
+    <collision><geometry><mesh filename="meshes/convex/convex_8.obj"/></geometry></collision>
+    <collision><geometry><mesh filename="meshes/convex/convex_9.obj"/></geometry></collision>
+  </link>
+</robot>

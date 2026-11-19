@@ -35,6 +35,10 @@ scene_files = [str(path) for path in sorted(Path("share/scenes").glob("*.yaml"))
 if scene_files:
     data_files.append((f"share/{package_name}/share/scenes", scene_files))
 
+for asset in sorted(Path("share/assets").rglob("*")):
+    if asset.is_file():
+        data_files.append((f"share/{package_name}/{asset.parent.as_posix()}", [str(asset)]))
+
 collision_profile_files = [
     str(path) for path in sorted(Path("share/collision_primitives").glob("*.yaml"))
 ]
