@@ -60,6 +60,21 @@ def test_psm_pose_ik_reaches_orientation():
     np.testing.assert_allclose(solved.orientation, target.orientation, atol=1e-4)
 
 
+def test_psm_pose_ik_recovers_half_turn_from_held_pose():
+    robot = CRTKPSM(load_robot_config(BASE_ARMS / "PSM1.yaml"))
+    seed = robot.measured_js().position
+    target_joints = seed.copy()
+    target_joints[3] += np.pi
+    target = robot.compute_fk(target_joints)
+
+    assert not robot.compute_ik(target, seed=seed, max_iterations=0).success
+    result = robot.compute_ik(target, seed=seed)
+    assert result.success, result.message
+    solved = robot.compute_fk(result.position)
+    np.testing.assert_allclose(solved.position, target.position, atol=1e-5)
+    np.testing.assert_allclose(solved.orientation, target.orientation, atol=1e-5)
+
+
 def test_ecm_manifest_includes_endoscope_tip_transform(tmp_path):
     import subprocess
     from dvrk_isaac_sim.urdf_kinematics import write_kinematics_manifest

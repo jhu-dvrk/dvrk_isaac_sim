@@ -88,6 +88,12 @@ def _reference_usd(path: Path | None, prim_path: str, position=None, orientation
                 orient_op.Set(quat)
 
 
+def _view_pose_from_ecm_tip(tip_pose: Pose) -> Pose:
+    # Isaac camera axes are forward, left, up. Haply's dVRK view axes
+    # are left, up, forward, with the same origin at the lens.
+    return Pose(tip_pose.position, tip_pose.orientation[:, [1, 2, 0]])
+
+
 def _setup_scene_lighting() -> None:
     import omni.usd
     from pxr import Gf, UsdGeom, UsdLux
@@ -354,8 +360,8 @@ class IsaacSimRuntime:
         self.timeline.set_time_codes_per_second(self.options.simulation_rate_hz)
         self.timeline.set_target_framerate(self.options.render_rate_hz)
         self.timeline.play()
+        ecm = next((arm for arm in self.arms.values() if arm.config.type == "ECM"), None)
         if self.camera is not None:
-            ecm = next((arm for arm in self.arms.values() if arm.config.type == "ECM"), None)
             if ecm is not None:
                 self.camera.set_pose(ecm.model.measured_cp())
             self.camera.start_streaming()
@@ -364,10 +370,13 @@ class IsaacSimRuntime:
             name: arm.snapshot(self._simulation_time, self._sequence)
             for name, arm in self.arms.items()
         }
-        snapshots = with_publication_frames(
-            snapshots, [arm.config for arm in self.arms.values()]
+        return with_publication_frames(
+            snapshots, [arm.config for arm in self.arms.values()],
+            ecm_view_pose=(
+                _view_pose_from_ecm_tip(snapshots[ecm.config.name].measured_cp_world)
+                if ecm is not None else None
+            ),
         )
-        return snapshots
 
     def _load_scene_objects(self) -> None:
         """Import exercise objects with their declared fixed/dynamic behavior."""
@@ -457,10 +466,11 @@ class IsaacSimRuntime:
 
         ecm = next((arm for arm in self.arms.values() if arm.config.type == "ECM"), None)
         ecm_pose = ecm.model.measured_cp() if ecm is not None else None
-        has_ecm = ecm is not None
+        ecm_view_pose = _view_pose_from_ecm_tip(ecm_pose) if ecm_pose is not None else None
 
         for name, arm in self.arms.items():
-            arm.prepare_step(dt, now, ecm_pose, has_ecm=has_ecm)
+            reference = ecm_view_pose if arm.config.type == "PSM" else ecm_pose
+            arm.prepare_step(dt, now, reference, has_ecm=ecm is not None)
             self.command_warnings.extend((name, text) for text in arm.command_warnings)
             arm.command_warnings.clear()
 
@@ -494,10 +504,13 @@ class IsaacSimRuntime:
             name: arm.snapshot(self._simulation_time, self._sequence)
             for name, arm in self.arms.items()
         }
-        snapshots = with_publication_frames(
-            snapshots, [arm.config for arm in self.arms.values()]
+        return with_publication_frames(
+            snapshots, [arm.config for arm in self.arms.values()],
+            ecm_view_pose=(
+                _view_pose_from_ecm_tip(snapshots[ecm.config.name].measured_cp_world)
+                if ecm is not None else None
+            ),
         )
-        return snapshots
 
     def is_connected(self) -> bool:
         if self.simulation_app is None or not self._connected:

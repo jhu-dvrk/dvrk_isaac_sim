@@ -8,7 +8,7 @@ from typing import Iterable
 
 import numpy as np
 
-from dvrk_simulator_base.rotations import rpy_matrix, axis_rotation
+from dvrk_simulator_base.rotations import axis_rotation, rotation_to_quaternion_xyzw, rpy_matrix
 
 from dvrk_arm_description import RobotConfig
 from dvrk_simulator_base.rotations import quaternion_matrix_xyzw as _quaternion_matrix_xyzw
@@ -21,6 +21,19 @@ def _transform(rotation: np.ndarray, translation: Iterable[float]) -> np.ndarray
     result[:3, :3] = rotation
     result[:3, 3] = translation
     return result
+
+
+def _orientation_error(target: np.ndarray, current: np.ndarray) -> np.ndarray:
+    # A skew-only residual vanishes at a half-turn. Use the shortest
+    # rotation vector in world coordinates for the spatial Jacobian.
+    quaternion = np.asarray(rotation_to_quaternion_xyzw(target @ current.T))
+    if quaternion[3] < 0.0:
+        quaternion = -quaternion
+    sine = float(np.linalg.norm(quaternion[:3]))
+    if sine < 1e-12:
+        return 2.0 * quaternion[:3]
+    angle = 2.0 * math.atan2(sine, float(quaternion[3]))
+    return quaternion[:3] * (angle / sine)
 
 
 class CRTKComponent:
@@ -213,13 +226,7 @@ class CRTKComponent:
             pose = Pose(transform[:3, 3], transform[:3, :3])
             position_error = target.position - pose.position
             if use_orientation:
-                # First-order world-frame rotation error. This is compatible
-                # with the angular part of the spatial Jacobian.
-                orientation_error = 0.5 * (
-                    np.cross(pose.orientation[:, 0], target.orientation[:, 0])
-                    + np.cross(pose.orientation[:, 1], target.orientation[:, 1])
-                    + np.cross(pose.orientation[:, 2], target.orientation[:, 2])
-                )
+                orientation_error = _orientation_error(target.orientation, pose.orientation)
                 error = np.concatenate((position_error, orientation_error))
             else:
                 error = position_error
@@ -235,11 +242,7 @@ class CRTKComponent:
         pose = self.compute_fk(q)
         position_error = target.position - pose.position
         if use_orientation:
-            orientation_error = 0.5 * (
-                np.cross(pose.orientation[:, 0], target.orientation[:, 0])
-                + np.cross(pose.orientation[:, 1], target.orientation[:, 1])
-                + np.cross(pose.orientation[:, 2], target.orientation[:, 2])
-            )
+            orientation_error = _orientation_error(target.orientation, pose.orientation)
             error_norm = float(np.linalg.norm(np.concatenate((position_error, orientation_error))))
         else:
             error_norm = float(np.linalg.norm(position_error))

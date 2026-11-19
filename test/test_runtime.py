@@ -212,3 +212,102 @@ def test_scene_shape_objects_author_rotation_and_unscaled_placement(monkeypatch)
     # placement must not be multiplied by the box scale
     assert tuple(transform.GetTranslation()) == pytest.approx((0.0, 0.0, -0.025))
     assert tuple(transform.GetScale()) == pytest.approx((0.8, 0.8, 0.08))
+
+
+@pytest.mark.parametrize("frame", ["", "ECM_view"])
+def test_haply_servo_uses_rendered_camera_axes(frame, tmp_path):
+    from dvrk_isaac_sim.runtime import IsaacSimRuntime
+    from dvrk_isaac_sim.urdf_kinematics import write_kinematics_manifest
+    from dvrk_simulator_base.cartesian_command import CartesianCommand
+    from dvrk_simulator_base.urdf_materializer import materialize_virtual_robot
+
+    ecm = load_robot_config(Path(get_package_share_directory("dvrk_arm_description")) / "arms/ECM.yaml")
+    psm = _psm1_robot()
+    robots = (ecm, psm)
+    commands = {robot.name: CommandMailboxes() for robot in robots}
+    runtime = IsaacSimRuntime(robots, RuntimeOptions(), commands)
+    for robot in robots:
+        artifact = materialize_virtual_robot(
+            robot.name, instrument=robot.instrument, endoscope=robot.endoscope,
+            generated_root=tmp_path,
+        )
+        manifest = write_kinematics_manifest(
+            artifact.urdf_path, tmp_path / f"{robot.name}.json", robot.name,
+        )
+        runtime.arms[robot.name] = IsaacSimArm(robot, commands[robot.name], manifest)
+
+    rendered_poses = []
+
+    class Camera:
+        def set_pose(self, pose):
+            rendered_poses.append(pose)
+
+        def capture(self, simulation_time):
+            pass
+
+    class App:
+        def update(self):
+            pass
+
+    runtime.camera = Camera()
+    runtime.simulation_app = App()
+    ecm_joints = np.array(ecm.home_position)
+    ecm_joints[3] = 0.3
+    commands["ECM"].submit_servo("servo_jp", ecm_joints)
+    for _ in range(120):
+        initial = runtime.step()["PSM1"]
+    tip = rendered_poses[-1]
+    axes = np.column_stack((tip.orientation[:, 1], tip.orientation[:, 2], tip.orientation[:, 0]))
+    feedback = initial.publication_frames.measured_cp
+    np.testing.assert_allclose(feedback.position, axes.T @ (initial.measured_cp_world.position - tip.position))
+    np.testing.assert_allclose(feedback.orientation, axes.T @ initial.measured_cp_world.orientation)
+
+    # Teleoperation adds scaled master displacement to the published slave
+    # position and applies the stylus rotation relative to its aligned pose.
+    displacement = 0.4 * np.array([0.005, -0.007, 0.009])
+    angle = 0.02
+    rotation = np.array([
+        [np.cos(angle), -np.sin(angle), 0.],
+        [np.sin(angle), np.cos(angle), 0.],
+        [0., 0., 1.],
+    ])
+    goal = Pose(feedback.position + displacement, rotation @ feedback.orientation)
+    commands["PSM1"].submit_servo("servo_cp", CartesianCommand(goal, frame))
+
+    result = runtime.step()["PSM1"]
+    assert not runtime.command_warnings
+    np.testing.assert_allclose(
+        result.setpoint_cp_world.position - initial.measured_cp_world.position,
+        axes @ displacement, atol=1e-5,
+    )
+    np.testing.assert_allclose(result.setpoint_cp_world.orientation, axes @ goal.orientation, atol=1e-5)
+    for _ in range(24):
+        result = runtime.step()["PSM1"]
+    np.testing.assert_allclose(result.measured_cp_world.position, result.setpoint_cp_world.position, atol=1e-5)
+    np.testing.assert_allclose(result.measured_cp_world.orientation, result.setpoint_cp_world.orientation, atol=1e-5)
+
+    # The console refreshes its master pose and PSM setpoint on clutch release.
+    # At the new master anchor, the first command must hold the tool pose.
+    held = result.publication_frames.setpoint_cp
+    master_at_release = rotation.T
+    alignment = master_at_release.T @ held.orientation
+    resumed = Pose(held.position, master_at_release @ alignment)
+    commands["PSM1"].submit_servo("servo_cp", CartesianCommand(resumed, frame))
+    after_release = runtime.step()["PSM1"]
+    np.testing.assert_allclose(
+        after_release.setpoint_cp_world.position, result.setpoint_cp_world.position, atol=1e-5,
+    )
+    np.testing.assert_allclose(
+        after_release.setpoint_cp_world.orientation, result.setpoint_cp_world.orientation, atol=1e-5,
+    )
+
+    rotated = Pose(held.position, rotation @ master_at_release @ alignment)
+    commands["PSM1"].submit_servo("servo_cp", CartesianCommand(rotated, frame))
+    following = runtime.step()["PSM1"]
+    assert not runtime.command_warnings
+    np.testing.assert_allclose(
+        following.publication_frames.setpoint_cp.position, held.position, atol=1e-5,
+    )
+    np.testing.assert_allclose(
+        following.publication_frames.setpoint_cp.orientation, rotated.orientation, atol=1e-5,
+    )
